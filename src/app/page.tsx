@@ -1,58 +1,42 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { createClient } from "@/lib/supabase/server";
 
-type LoadRecord = {
-  id: string;
-  loadNumber: string;
-  revenue: number;
-  loadedMiles: number;
-  deadheadMiles: number;
-  status:
-    | "planned"
-    | "in-progress"
-    | "completed"
-    | "cancelled";
-  completedAt: string | null;
+import {
+  ReportingPeriodSelect,
+  type ReportingPeriod,
+} from "./reporting-period-select";
+
+export const metadata: Metadata = {
+  title: "Dashboard",
+  description:
+    "Axleledger driver financial dashboard.",
 };
 
-type ExpenseCategory =
-  | "Fuel"
-  | "Maintenance"
-  | "Tolls"
-  | "Parking"
-  | "Scales"
-  | "Food"
-  | "Supplies"
-  | "Other";
-
-type ExpenseRecord = {
-  id: string;
-  category: ExpenseCategory;
-  amount: number;
-  occurredAt: string;
-  vendor: string | null;
-};
-
-type DatabaseLoadStatus =
+type LoadStatus =
   | "planned"
   | "in_progress"
   | "completed"
   | "cancelled";
 
-type DatabaseLoadRecord = {
+type LoadRecord = {
   id: string;
   load_number: string;
+  origin_city: string;
+  origin_state: string;
+  destination_city: string;
+  destination_state: string;
+  pickup_date: string;
+  delivery_date: string | null;
   gross_revenue: number;
   loaded_miles: number;
   deadhead_miles: number;
-  status: DatabaseLoadStatus;
-  delivery_date: string | null;
-  created_at: string;
+  status: LoadStatus;
 };
 
-type DatabaseExpenseCategory =
+type ExpenseCategory =
   | "fuel"
   | "maintenance"
   | "tolls"
@@ -62,9 +46,9 @@ type DatabaseExpenseCategory =
   | "supplies"
   | "other";
 
-type DatabaseExpenseRecord = {
+type ExpenseRecord = {
   id: string;
-  category: DatabaseExpenseCategory;
+  category: ExpenseCategory;
   amount: number;
   expense_date: string;
   vendor: string | null;
@@ -72,11 +56,12 @@ type DatabaseExpenseRecord = {
 
 type SettlementRecord = {
   id: string;
-  grossPay: number;
+  settlement_date: string;
+  carrier_or_company: string | null;
+  gross_pay: number;
   deductions: number;
   reimbursements: number;
-  netDeposit: number;
-  settlementDate: string;
+  net_deposit: number;
 };
 
 type FixedCostRecord = {
@@ -84,7 +69,8 @@ type FixedCostRecord = {
   name: string;
   amount: number;
   frequency: "weekly" | "monthly";
-  effectiveDate: string;
+  effective_date: string;
+  is_active: boolean;
 };
 
 type ActivityRecord = {
@@ -93,10 +79,15 @@ type ActivityRecord = {
   description: string;
   amount: number;
   occurredAt: string;
+  sortDate: string;
   type: "income" | "expense";
 };
 
-type StatusTone = "neutral" | "good" | "warning" | "bad";
+type StatusTone =
+  | "neutral"
+  | "good"
+  | "warning"
+  | "bad";
 
 type DashboardMetric = {
   label: string;
@@ -106,29 +97,37 @@ type DashboardMetric = {
   tone: StatusTone;
 };
 
-/*
-  Settlements and fixed costs remain empty until
-  those database features are implemented.
-*/
-const settlements: SettlementRecord[] = [];
-const fixedCosts: FixedCostRecord[] = [];
+type HomePageProps = {
+  searchParams: Promise<{
+    period?: string;
+  }>;
+};
 
 const navigationItems = [
   {
     label: "Dashboard",
+    mobileLabel: "Home",
     href: "/",
   },
   {
     label: "Loads",
+    mobileLabel: "Loads",
     href: "/loads",
   },
   {
     label: "Expenses",
+    mobileLabel: "Expenses",
     href: "/expenses",
   },
   {
     label: "Settlements",
-    href: null,
+    mobileLabel: "Pay",
+    href: "/settlements",
+  },
+  {
+    label: "Fixed costs",
+    mobileLabel: "Costs",
+    href: "/fixed-costs",
   },
 ] as const;
 
@@ -152,20 +151,31 @@ const quickActions = [
     description:
       "Record deductions and your actual deposit",
     symbol: "$",
-    href: null,
+    href: "/settlements#settlement-form",
   },
   {
     label: "Manage fixed costs",
     description:
       "Set truck payment, insurance, and recurring costs",
     symbol: "=",
-    href: null,
+    href: "/fixed-costs#fixed-cost-form",
   },
 ] as const;
 
-const expenseCategoryLabels: Record<
-  DatabaseExpenseCategory,
-  ExpenseCategory
+const periodLabels: Record<
+  ReportingPeriod,
+  string
+> = {
+  this_week: "This week",
+  last_week: "Last week",
+  this_month: "This month",
+  year_to_date: "Year to date",
+  all_time: "All time",
+};
+
+const expenseLabels: Record<
+  ExpenseCategory,
+  string
 > = {
   fuel: "Fuel",
   maintenance: "Maintenance",
@@ -177,15 +187,16 @@ const expenseCategoryLabels: Record<
   other: "Other",
 };
 
-const currencyFormatter = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-});
+const currencyFormatter =
+  new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+  });
 
 const numberFormatter =
   new Intl.NumberFormat("en-US");
 
-const activityDateFormatter =
+const dateFormatter =
   new Intl.DateTimeFormat("en-US", {
     month: "short",
     day: "numeric",
@@ -194,46 +205,244 @@ const activityDateFormatter =
   });
 
 function formatCurrency(value: number) {
-  return currencyFormatter.format(value);
+  return currencyFormatter.format(
+    Number(value),
+  );
 }
 
 function formatNumber(value: number) {
-  return numberFormatter.format(value);
-}
-
-function formatActivityDate(
-  value: string | null,
-) {
-  if (!value) {
-    return "Date unavailable";
-  }
-
-  const date = value.includes("T")
-    ? new Date(value)
-    : new Date(`${value}T00:00:00Z`);
-
-  return activityDateFormatter.format(
-    date,
+  return numberFormatter.format(
+    Number(value),
   );
 }
 
 function formatRate(value: number | null) {
-  if (value === null) {
-    return "—";
-  }
-
-  return formatCurrency(value);
+  return value === null
+    ? "—"
+    : formatCurrency(value);
 }
 
-function sumValues<T>(records: T[], selector: (record: T) => number) {
-  return records.reduce((total, record) => total + selector(record), 0);
+function formatActivityDate(
+  value: string,
+) {
+  return dateFormatter.format(
+    new Date(`${value}T00:00:00Z`),
+  );
+}
+
+function parseDateOnly(value: string) {
+  const [year, month, day] = value
+    .split("-")
+    .map(Number);
+
+  return new Date(
+    Date.UTC(year, month - 1, day),
+  );
+}
+
+function formatDateOnly(value: Date) {
+  return value.toISOString().slice(0, 10);
+}
+
+function addDays(
+  value: Date,
+  amount: number,
+) {
+  const result = new Date(value);
+
+  result.setUTCDate(
+    result.getUTCDate() + amount,
+  );
+
+  return result;
+}
+
+function getTodayDateString() {
+  const formatter =
+    new Intl.DateTimeFormat("en-US", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      timeZone: "America/Chicago",
+    });
+
+  const parts =
+    formatter.formatToParts(new Date());
+
+  const values = Object.fromEntries(
+    parts.map((part) => [
+      part.type,
+      part.value,
+    ]),
+  ) as Record<string, string>;
+
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function getReportingPeriod(
+  value: string | undefined,
+): ReportingPeriod {
+  const allowedPeriods =
+    new Set<ReportingPeriod>([
+      "this_week",
+      "last_week",
+      "this_month",
+      "year_to_date",
+      "all_time",
+    ]);
+
+  return allowedPeriods.has(
+    value as ReportingPeriod,
+  )
+    ? (value as ReportingPeriod)
+    : "this_week";
+}
+
+function resolvePeriodRange(
+  period: ReportingPeriod,
+  todayValue: string,
+  allDates: string[],
+) {
+  const today =
+    parseDateOnly(todayValue);
+
+  const dayOfWeek =
+    today.getUTCDay();
+
+  const daysSinceMonday =
+    (dayOfWeek + 6) % 7;
+
+  const thisWeekStart = addDays(
+    today,
+    -daysSinceMonday,
+  );
+
+  if (period === "this_week") {
+    return {
+      start: formatDateOnly(
+        thisWeekStart,
+      ),
+      end: todayValue,
+    };
+  }
+
+  if (period === "last_week") {
+    return {
+      start: formatDateOnly(
+        addDays(thisWeekStart, -7),
+      ),
+      end: formatDateOnly(
+        addDays(thisWeekStart, -1),
+      ),
+    };
+  }
+
+  if (period === "this_month") {
+    return {
+      start: `${todayValue.slice(
+        0,
+        7,
+      )}-01`,
+      end: todayValue,
+    };
+  }
+
+  if (period === "year_to_date") {
+    return {
+      start: `${todayValue.slice(
+        0,
+        4,
+      )}-01-01`,
+      end: todayValue,
+    };
+  }
+
+  const validDates = allDates
+    .filter(Boolean)
+    .sort();
+
+  return {
+    start:
+      validDates[0] ?? todayValue,
+    end: todayValue,
+  };
+}
+
+function isWithinPeriod(
+  value: string,
+  start: string,
+  end: string,
+) {
+  return value >= start && value <= end;
+}
+
+function daysInclusive(
+  start: string,
+  end: string,
+) {
+  const milliseconds =
+    parseDateOnly(end).getTime() -
+    parseDateOnly(start).getTime();
+
+  return (
+    Math.floor(
+      milliseconds /
+        (1000 * 60 * 60 * 24),
+    ) + 1
+  );
+}
+
+function recurringCostForPeriod(
+  fixedCost: FixedCostRecord,
+  periodStart: string,
+  periodEnd: string,
+) {
+  if (
+    !fixedCost.is_active ||
+    fixedCost.effective_date >
+      periodEnd
+  ) {
+    return 0;
+  }
+
+  const effectiveStart =
+    fixedCost.effective_date >
+    periodStart
+      ? fixedCost.effective_date
+      : periodStart;
+
+  const days = daysInclusive(
+    effectiveStart,
+    periodEnd,
+  );
+
+  const divisor =
+    fixedCost.frequency === "weekly"
+      ? 7
+      : 30.4375;
+
+  return (
+    Number(fixedCost.amount) *
+    (days / divisor)
+  );
+}
+
+function sumValues<T>(
+  records: T[],
+  selector: (record: T) => number,
+) {
+  return records.reduce(
+    (total, record) =>
+      total + selector(record),
+    0,
+  );
 }
 
 function getProfitTone(
   value: number,
-  hasFinancialData: boolean,
+  hasData: boolean,
 ): StatusTone {
-  if (!hasFinancialData) {
+  if (!hasData) {
     return "neutral";
   }
 
@@ -250,9 +459,9 @@ function getProfitTone(
 
 function getProfitStatus(
   value: number,
-  hasFinancialData: boolean,
+  hasData: boolean,
 ) {
-  if (!hasFinancialData) {
+  if (!hasData) {
     return "No data";
   }
 
@@ -265,6 +474,64 @@ function getProfitStatus(
   }
 
   return "Operating at a loss";
+}
+
+function getExpenseTone(
+  expenseTotal: number,
+  incomeTotal: number,
+): StatusTone {
+  if (
+    expenseTotal === 0 &&
+    incomeTotal === 0
+  ) {
+    return "neutral";
+  }
+
+  if (
+    incomeTotal === 0 &&
+    expenseTotal > 0
+  ) {
+    return "bad";
+  }
+
+  const ratio =
+    expenseTotal / incomeTotal;
+
+  if (ratio <= 0.6) {
+    return "good";
+  }
+
+  if (ratio <= 0.8) {
+    return "warning";
+  }
+
+  return "bad";
+}
+
+function getExpenseStatus(
+  expenseTotal: number,
+  incomeTotal: number,
+) {
+  const tone = getExpenseTone(
+    expenseTotal,
+    incomeTotal,
+  );
+
+  if (tone === "neutral") {
+    return "No data";
+  }
+
+  if (tone === "good") {
+    return "Good standing";
+  }
+
+  if (tone === "warning") {
+    return "Needs attention";
+  }
+
+  return incomeTotal === 0
+    ? "Costs without income"
+    : "Expenses too high";
 }
 
 function getProfitPerMileTone(
@@ -301,56 +568,6 @@ function getProfitPerMileStatus(
   }
 
   return "Losing money per mile";
-}
-
-function getExpenseTone(
-  expenseTotal: number,
-  grossRevenue: number,
-): StatusTone {
-  if (expenseTotal === 0 && grossRevenue === 0) {
-    return "neutral";
-  }
-
-  if (grossRevenue === 0 && expenseTotal > 0) {
-    return "bad";
-  }
-
-  const expenseRatio = expenseTotal / grossRevenue;
-
-  if (expenseRatio <= 0.6) {
-    return "good";
-  }
-
-  if (expenseRatio <= 0.8) {
-    return "warning";
-  }
-
-  return "bad";
-}
-
-function getExpenseStatus(
-  expenseTotal: number,
-  grossRevenue: number,
-) {
-  if (expenseTotal === 0 && grossRevenue === 0) {
-    return "No data";
-  }
-
-  if (grossRevenue === 0 && expenseTotal > 0) {
-    return "Costs without revenue";
-  }
-
-  const expenseRatio = expenseTotal / grossRevenue;
-
-  if (expenseRatio <= 0.6) {
-    return "Good standing";
-  }
-
-  if (expenseRatio <= 0.8) {
-    return "Needs attention";
-  }
-
-  return "Expenses too high";
 }
 
 const toneStyles: Record<
@@ -392,7 +609,8 @@ function MetricCard({
 }: {
   metric: DashboardMetric;
 }) {
-  const styles = toneStyles[metric.tone];
+  const styles =
+    toneStyles[metric.tone];
 
   return (
     <article className="rounded-2xl border border-slate-800 bg-slate-900/80 p-5 shadow-xl shadow-black/10">
@@ -421,7 +639,15 @@ function MetricCard({
   );
 }
 
-export default async function Home() {
+export default async function Home({
+  searchParams,
+}: HomePageProps) {
+  const { period: rawPeriod } =
+    await searchParams;
+
+  const period =
+    getReportingPeriod(rawPeriod);
+
   const supabase = await createClient();
 
   const { data: claimsData } =
@@ -440,11 +666,19 @@ export default async function Home() {
   const [
     {
       data: loadsData,
-      error: loadsQueryError,
+      error: loadsError,
     },
     {
       data: expensesData,
-      error: expensesQueryError,
+      error: expensesError,
+    },
+    {
+      data: settlementsData,
+      error: settlementsError,
+    },
+    {
+      data: fixedCostsData,
+      error: fixedCostsError,
     },
   ] = await Promise.all([
     supabase
@@ -453,18 +687,19 @@ export default async function Home() {
         `
           id,
           load_number,
+          origin_city,
+          origin_state,
+          destination_city,
+          destination_state,
+          pickup_date,
+          delivery_date,
           gross_revenue,
           loaded_miles,
           deadhead_miles,
-          status,
-          delivery_date,
-          created_at
+          status
         `,
       )
-      .eq("user_id", userId)
-      .order("created_at", {
-        ascending: false,
-      }),
+      .eq("user_id", userId),
     supabase
       .from("expenses")
       .select(
@@ -476,160 +711,193 @@ export default async function Home() {
           vendor
         `,
       )
-      .eq("user_id", userId)
-      .order("expense_date", {
-        ascending: false,
-      })
-      .order("created_at", {
-        ascending: false,
-      }),
+      .eq("user_id", userId),
+    supabase
+      .from("settlements")
+      .select(
+        `
+          id,
+          settlement_date,
+          carrier_or_company,
+          gross_pay,
+          deductions,
+          reimbursements,
+          net_deposit
+        `,
+      )
+      .eq("user_id", userId),
+    supabase
+      .from("fixed_costs")
+      .select(
+        `
+          id,
+          name,
+          amount,
+          frequency,
+          effective_date,
+          is_active
+        `,
+      )
+      .eq("user_id", userId),
   ]);
 
-  if (loadsQueryError) {
+  if (loadsError) {
     console.error(
-      "Unable to retrieve dashboard loads:",
-      loadsQueryError,
+      "Dashboard loads query failed:",
+      loadsError,
     );
   }
 
-  if (expensesQueryError) {
+  if (expensesError) {
     console.error(
-      "Unable to retrieve dashboard expenses:",
-      expensesQueryError,
+      "Dashboard expenses query failed:",
+      expensesError,
     );
   }
 
-  const loads = (
-    (loadsData ?? []) as DatabaseLoadRecord[]
-  ).map(
-    (load): LoadRecord => ({
-      id: load.id,
-      loadNumber: load.load_number,
-      revenue: Number(
-        load.gross_revenue,
-      ),
-      loadedMiles: Number(
-        load.loaded_miles,
-      ),
-      deadheadMiles: Number(
-        load.deadhead_miles,
-      ),
-      status:
-        load.status === "in_progress"
-          ? "in-progress"
-          : load.status,
-      completedAt:
-        load.delivery_date ??
-        load.created_at,
-    }),
-  );
+  if (settlementsError) {
+    console.error(
+      "Dashboard settlements query failed:",
+      settlementsError,
+    );
+  }
 
-  const expenses = (
+  if (fixedCostsError) {
+    console.error(
+      "Dashboard fixed costs query failed:",
+      fixedCostsError,
+    );
+  }
+
+  const loads =
+    (loadsData ?? []) as LoadRecord[];
+
+  const expenses =
     (expensesData ??
-      []) as DatabaseExpenseRecord[]
-  ).map(
-    (expense): ExpenseRecord => ({
-      id: expense.id,
-      category:
-        expenseCategoryLabels[
-          expense.category
-        ],
-      amount: Number(expense.amount),
-      occurredAt: expense.expense_date,
-      vendor: expense.vendor,
-    }),
-  );
+      []) as ExpenseRecord[];
 
-  const activityEntries = [
-    ...loads
-      .filter(
-        (load) =>
-          load.status === "completed",
-      )
-      .map((load) => ({
-        id: `load-${load.id}`,
-        title: load.loadNumber,
-        description: "Completed load",
-        amount: load.revenue,
-        occurredAt: formatActivityDate(
-          load.completedAt,
-        ),
-        type: "income" as const,
-        sortDate:
-          load.completedAt ?? "",
-      })),
-    ...expenses.map((expense) => ({
-      id: `expense-${expense.id}`,
-      title:
-        expense.vendor ??
-        `${expense.category} expense`,
-      description: expense.category,
-      amount: expense.amount,
-      occurredAt: formatActivityDate(
-        expense.occurredAt,
-      ),
-      type: "expense" as const,
-      sortDate: expense.occurredAt,
-    })),
+  const settlements =
+    (settlementsData ??
+      []) as SettlementRecord[];
+
+  const fixedCosts =
+    (fixedCostsData ??
+      []) as FixedCostRecord[];
+
+  const today =
+    getTodayDateString();
+
+  const allDates = [
+    ...loads.map(
+      (load) =>
+        load.delivery_date ??
+        load.pickup_date,
+    ),
+    ...expenses.map(
+      (expense) =>
+        expense.expense_date,
+    ),
+    ...settlements.map(
+      (settlement) =>
+        settlement.settlement_date,
+    ),
+    ...fixedCosts.map(
+      (fixedCost) =>
+        fixedCost.effective_date,
+    ),
   ];
 
-  const recentActivity: ActivityRecord[] =
-    activityEntries
-      .sort((first, second) =>
-        second.sortDate.localeCompare(
-          first.sortDate,
-        ),
-      )
-      .slice(0, 8)
-      .map((entry) => ({
-        id: entry.id,
-        title: entry.title,
-        description: entry.description,
-        amount: entry.amount,
-        occurredAt: entry.occurredAt,
-        type: entry.type,
-      }));
+  const {
+    start: periodStart,
+    end: periodEnd,
+  } = resolvePeriodRange(
+    period,
+    today,
+    allDates,
+  );
 
-  const hasDashboardQueryError =
-    Boolean(
-      loadsQueryError ||
-        expensesQueryError,
+  const completedLoads =
+    loads.filter((load) => {
+      const completedDate =
+        load.delivery_date ??
+        load.pickup_date;
+
+      return (
+        load.status === "completed" &&
+        isWithinPeriod(
+          completedDate,
+          periodStart,
+          periodEnd,
+        )
+      );
+    });
+
+  const periodExpenses =
+    expenses.filter((expense) =>
+      isWithinPeriod(
+        expense.expense_date,
+        periodStart,
+        periodEnd,
+      ),
     );
 
-  const completedLoads = loads.filter(
-    (load) => load.status === "completed",
-  );
+  const periodSettlements =
+    settlements.filter((settlement) =>
+      isWithinPeriod(
+        settlement.settlement_date,
+        periodStart,
+        periodEnd,
+      ),
+    );
+
+  const activeFixedCosts =
+    fixedCosts.filter(
+      (fixedCost) =>
+        fixedCost.is_active &&
+        fixedCost.effective_date <=
+          periodEnd,
+    );
 
   const grossRevenue = sumValues(
     completedLoads,
-    (load) => load.revenue,
+    (load) =>
+      Number(load.gross_revenue),
   );
 
-  const loadedMiles = sumValues(
-    completedLoads,
-    (load) => load.loadedMiles,
+  const reimbursements = sumValues(
+    periodSettlements,
+    (settlement) =>
+      Number(
+        settlement.reimbursements,
+      ),
   );
 
-  const deadheadMiles = sumValues(
-    completedLoads,
-    (load) => load.deadheadMiles,
-  );
-
-  const totalMiles = loadedMiles + deadheadMiles;
+  const totalIncome =
+    grossRevenue + reimbursements;
 
   const directExpenses = sumValues(
-    expenses,
-    (expense) => expense.amount,
+    periodExpenses,
+    (expense) =>
+      Number(expense.amount),
   );
 
-  const settlementDeductions = sumValues(
-    settlements,
-    (settlement) => settlement.deductions,
-  );
+  const settlementDeductions =
+    sumValues(
+      periodSettlements,
+      (settlement) =>
+        Number(
+          settlement.deductions,
+        ),
+    );
 
   const recurringCosts = sumValues(
-    fixedCosts,
-    (fixedCost) => fixedCost.amount,
+    activeFixedCosts,
+    (fixedCost) =>
+      recurringCostForPeriod(
+        fixedCost,
+        periodStart,
+        periodEnd,
+      ),
   );
 
   const totalExpenses =
@@ -637,146 +905,291 @@ export default async function Home() {
     settlementDeductions +
     recurringCosts;
 
-  const netProfit = grossRevenue - totalExpenses;
+  const netProfit =
+    totalIncome - totalExpenses;
+
+  const loadedMiles = sumValues(
+    completedLoads,
+    (load) =>
+      Number(load.loaded_miles),
+  );
+
+  const deadheadMiles = sumValues(
+    completedLoads,
+    (load) =>
+      Number(load.deadhead_miles),
+  );
+
+  const totalMiles =
+    loadedMiles + deadheadMiles;
 
   const profitPerMile =
-    totalMiles > 0 ? netProfit / totalMiles : null;
+    totalMiles > 0
+      ? netProfit / totalMiles
+      : null;
 
   const deadheadRate =
     totalMiles > 0
-      ? (deadheadMiles / totalMiles) * 100
+      ? (deadheadMiles /
+          totalMiles) *
+        100
       : null;
 
   const averageRevenuePerLoad =
     completedLoads.length > 0
-      ? grossRevenue / completedLoads.length
+      ? grossRevenue /
+        completedLoads.length
       : null;
 
   const fuelExpenses = sumValues(
-    expenses.filter(
-      (expense) => expense.category === "Fuel",
+    periodExpenses.filter(
+      (expense) =>
+        expense.category === "fuel",
     ),
-    (expense) => expense.amount,
+    (expense) =>
+      Number(expense.amount),
   );
 
   const fuelCostPerMile =
-    totalMiles > 0 && fuelExpenses > 0
+    totalMiles > 0 &&
+    fuelExpenses > 0
       ? fuelExpenses / totalMiles
       : null;
 
+  const netDeposits = sumValues(
+    periodSettlements,
+    (settlement) =>
+      Number(
+        settlement.net_deposit,
+      ),
+  );
+
   const estimatedTaxReserve =
-    netProfit > 0 ? netProfit * 0.25 : null;
+    netProfit > 0
+      ? netProfit * 0.25
+      : null;
 
   const hasFinancialData =
-    loads.length > 0 ||
-    expenses.length > 0 ||
-    settlements.length > 0 ||
-    fixedCosts.length > 0;
+    completedLoads.length > 0 ||
+    periodExpenses.length > 0 ||
+    periodSettlements.length > 0 ||
+    recurringCosts > 0;
 
-  const hasBreakEvenData = totalExpenses > 0;
+  const overallTone =
+    getProfitTone(
+      netProfit,
+      hasFinancialData,
+    );
+
+  const overallStatus =
+    getProfitStatus(
+      netProfit,
+      hasFinancialData,
+    );
+
+  const expenseTone =
+    getExpenseTone(
+      totalExpenses,
+      totalIncome,
+    );
+
+  const expenseStatus =
+    getExpenseStatus(
+      totalExpenses,
+      totalIncome,
+    );
+
+  const profitPerMileTone =
+    getProfitPerMileTone(
+      profitPerMile,
+    );
+
+  const profitPerMileStatus =
+    getProfitPerMileStatus(
+      profitPerMile,
+    );
+
+  const dashboardMetrics: DashboardMetric[] =
+    [
+      {
+        label: "Gross revenue",
+        value:
+          formatCurrency(grossRevenue),
+        detail:
+          completedLoads.length === 1
+            ? "1 completed load"
+            : `${completedLoads.length} completed loads`,
+        statusLabel:
+          completedLoads.length > 0
+            ? "Revenue recorded"
+            : "No data",
+        tone: "neutral",
+      },
+      {
+        label: "Total expenses",
+        value:
+          formatCurrency(totalExpenses),
+        detail:
+          totalIncome > 0
+            ? `${Math.round(
+                (totalExpenses /
+                  totalIncome) *
+                  100,
+              )}% of income`
+            : "Direct, settlement, and recurring costs",
+        statusLabel:
+          expenseStatus,
+        tone: expenseTone,
+      },
+      {
+        label: "Net profit",
+        value:
+          formatCurrency(netProfit),
+        detail:
+          reimbursements > 0
+            ? `Includes ${formatCurrency(
+                reimbursements,
+              )} reimbursements`
+            : "Before estimated taxes",
+        statusLabel:
+          overallStatus,
+        tone: overallTone,
+      },
+      {
+        label: "Profit per mile",
+        value:
+          formatRate(
+            profitPerMile,
+          ),
+        detail:
+          totalMiles > 0
+            ? `${formatNumber(
+                totalMiles,
+              )} total miles`
+            : "No mileage recorded",
+        statusLabel:
+          profitPerMileStatus,
+        tone:
+          profitPerMileTone,
+      },
+    ];
+
+  const hasBreakEvenData =
+    totalExpenses > 0;
 
   const breakEvenProgress =
     hasBreakEvenData
       ? Math.min(
-          (grossRevenue / totalExpenses) * 100,
+          (totalIncome /
+            totalExpenses) *
+            100,
           100,
         )
       : 0;
 
-  const overallTone = getProfitTone(
-    netProfit,
-    hasFinancialData,
-  );
-
-  const overallStatus = getProfitStatus(
-    netProfit,
-    hasFinancialData,
-  );
-
-  const expenseTone = getExpenseTone(
-    totalExpenses,
-    grossRevenue,
-  );
-
-  const expenseStatus = getExpenseStatus(
-    totalExpenses,
-    grossRevenue,
-  );
-
-  const profitPerMileTone =
-    getProfitPerMileTone(profitPerMile);
-
-  const profitPerMileStatus =
-    getProfitPerMileStatus(profitPerMile);
-
-  const dashboardMetrics: DashboardMetric[] = [
-    {
-      label: "Gross revenue",
-      value: formatCurrency(grossRevenue),
-      detail:
-        completedLoads.length === 1
-          ? "1 completed load"
-          : `${completedLoads.length} completed loads`,
-      statusLabel:
-        completedLoads.length > 0
-          ? "Revenue recorded"
-          : "No data",
-      tone:
-        completedLoads.length > 0
-          ? "neutral"
-          : "neutral",
-    },
-    {
-      label: "Total expenses",
-      value: formatCurrency(totalExpenses),
-      detail:
-        totalExpenses > 0 && grossRevenue > 0
-          ? `${Math.round(
-              (totalExpenses / grossRevenue) * 100,
-            )}% of gross revenue`
-          : "No expenses recorded",
-      statusLabel: expenseStatus,
-      tone: expenseTone,
-    },
-    {
-      label: "Net profit",
-      value: formatCurrency(netProfit),
-      detail:
-        hasFinancialData
-          ? "Before estimated taxes"
-          : "Add records to calculate profit",
-      statusLabel: overallStatus,
-      tone: overallTone,
-    },
-    {
-      label: "Profit per mile",
-      value: formatRate(profitPerMile),
-      detail:
-        totalMiles > 0
-          ? `${formatNumber(totalMiles)} total miles`
-          : "No mileage recorded",
-      statusLabel: profitPerMileStatus,
-      tone: profitPerMileTone,
-    },
-  ];
-
   const breakEvenTone: StatusTone =
     !hasBreakEvenData
       ? "neutral"
-      : grossRevenue >= totalExpenses
+      : totalIncome >= totalExpenses
         ? "good"
-        : grossRevenue >= totalExpenses * 0.8
+        : totalIncome >=
+            totalExpenses * 0.8
           ? "warning"
           : "bad";
 
   const breakEvenStatus =
     !hasBreakEvenData
       ? "Not calculated"
-      : grossRevenue >= totalExpenses
+      : totalIncome >= totalExpenses
         ? "Good standing"
-        : grossRevenue >= totalExpenses * 0.8
+        : totalIncome >=
+            totalExpenses * 0.8
           ? "Getting close"
           : "Below break-even";
+
+  const recentActivity: ActivityRecord[] =
+    [
+      ...completedLoads.map(
+        (load) => {
+          const activityDate =
+            load.delivery_date ??
+            load.pickup_date;
+
+          return {
+            id: `load-${load.id}`,
+            title: load.load_number,
+            description:
+              `${load.origin_city}, ${load.origin_state} → ${load.destination_city}, ${load.destination_state}`,
+            amount: Number(
+              load.gross_revenue,
+            ),
+            occurredAt:
+              formatActivityDate(
+                activityDate,
+              ),
+            sortDate: activityDate,
+            type: "income" as const,
+          };
+        },
+      ),
+      ...periodExpenses.map(
+        (expense) => ({
+          id: `expense-${expense.id}`,
+          title:
+            expense.vendor ??
+            `${expenseLabels[
+              expense.category
+            ]} expense`,
+          description:
+            expenseLabels[
+              expense.category
+            ],
+          amount: Number(
+            expense.amount,
+          ),
+          occurredAt:
+            formatActivityDate(
+              expense.expense_date,
+            ),
+          sortDate:
+            expense.expense_date,
+          type: "expense" as const,
+        }),
+      ),
+      ...periodSettlements.map(
+        (settlement) => ({
+          id: `settlement-${settlement.id}`,
+          title:
+            settlement.carrier_or_company ??
+            "Settlement deposit",
+          description:
+            "Settlement bank deposit",
+          amount: Number(
+            settlement.net_deposit,
+          ),
+          occurredAt:
+            formatActivityDate(
+              settlement.settlement_date,
+            ),
+          sortDate:
+            settlement.settlement_date,
+          type: "income" as const,
+        }),
+      ),
+    ]
+      .sort((first, second) =>
+        second.sortDate.localeCompare(
+          first.sortDate,
+        ),
+      )
+      .slice(0, 8);
+
+  const hasQueryError = Boolean(
+    loadsError ||
+      expensesError ||
+      settlementsError ||
+      fixedCostsError,
+  );
 
   return (
     <main className="min-h-screen pb-24 lg:pb-8">
@@ -795,41 +1208,30 @@ export default async function Home() {
             </p>
           </div>
 
-          <div className="hidden items-center gap-2 lg:flex">
+          <nav className="hidden items-center gap-1 lg:flex">
             {navigationItems.map(
-              (item, index) =>
-                item.href ? (
-                  <Link
-                    key={item.label}
-                    href={item.href}
-                    className={
-                      index === 0
-                        ? "rounded-xl bg-sky-400/10 px-4 py-2.5 text-sm font-semibold text-sky-300"
-                        : "rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-400 transition hover:bg-slate-900 hover:text-white"
-                    }
-                  >
-                    {item.label}
-                  </Link>
-                ) : (
-                  <span
-                    key={item.label}
-                    aria-disabled="true"
-                    title="Coming soon"
-                    className="cursor-not-allowed rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-600"
-                  >
-                    {item.label}
-                  </span>
-                ),
+              (item, index) => (
+                <Link
+                  key={item.label}
+                  href={item.href}
+                  className={
+                    index === 0
+                      ? "rounded-xl bg-sky-400/10 px-3 py-2.5 text-sm font-semibold text-sky-300"
+                      : "rounded-xl px-3 py-2.5 text-sm font-semibold text-slate-400 transition hover:bg-slate-900 hover:text-white"
+                  }
+                >
+                  {item.label}
+                </Link>
+              ),
             )}
-          </div>
+          </nav>
 
-          <button
-            type="button"
-            aria-label="Open account menu"
-            className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-700 bg-slate-800 text-sm font-bold text-slate-200 transition hover:border-sky-400"
+          <div
+            aria-label="Account"
+            className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-700 bg-slate-800 text-sm font-bold text-slate-200"
           >
             LC
-          </button>
+          </div>
         </div>
       </header>
 
@@ -845,28 +1247,20 @@ export default async function Home() {
             </h1>
 
             <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-400">
-              Add loads, expenses, settlements, and fixed
-              costs to automatically calculate your actual
-              operating performance.
+              Live operating performance for{" "}
+              <span className="font-semibold text-slate-200">
+                {periodLabels[period]}
+              </span>
+              .
             </p>
           </div>
 
-          <label className="flex w-full flex-col gap-2 text-sm font-medium text-slate-400 sm:w-52">
-            Reporting period
-
-            <select
-              defaultValue="all-time"
-              disabled
-              className="cursor-not-allowed rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-sm font-semibold text-white opacity-80 outline-none"
-            >
-              <option value="all-time">
-                All recorded data
-              </option>
-            </select>
-          </label>
+          <ReportingPeriodSelect
+            value={period}
+          />
         </section>
 
-        {hasDashboardQueryError ? (
+        {hasQueryError ? (
           <div
             role="alert"
             className="mt-6 rounded-xl border border-red-400/20 bg-red-400/10 px-4 py-3 text-sm font-medium text-red-200"
@@ -878,12 +1272,14 @@ export default async function Home() {
         ) : null}
 
         <section className="mt-7 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          {dashboardMetrics.map((metric) => (
-            <MetricCard
-              key={metric.label}
-              metric={metric}
-            />
-          ))}
+          {dashboardMetrics.map(
+            (metric) => (
+              <MetricCard
+                key={metric.label}
+                metric={metric}
+              />
+            ),
+          )}
         </section>
 
         <section className="mt-8 grid gap-6 xl:grid-cols-[1.4fr_1fr]">
@@ -895,7 +1291,7 @@ export default async function Home() {
                 </p>
 
                 <h2 className="mt-1 text-xl font-bold text-white">
-                  Revenue versus break-even
+                  Income versus break-even
                 </h2>
               </div>
 
@@ -911,11 +1307,13 @@ export default async function Home() {
                 <div className="flex items-end justify-between gap-4">
                   <div>
                     <p className="text-sm text-slate-400">
-                      Current revenue
+                      Income
                     </p>
 
                     <p className="mt-1 text-3xl font-black text-white">
-                      {formatCurrency(grossRevenue)}
+                      {formatCurrency(
+                        totalIncome,
+                      )}
                     </p>
                   </div>
 
@@ -925,7 +1323,9 @@ export default async function Home() {
                     </p>
 
                     <p className="mt-1 text-lg font-bold text-slate-200">
-                      {formatCurrency(totalExpenses)}
+                      {formatCurrency(
+                        totalExpenses,
+                      )}
                     </p>
                   </div>
                 </div>
@@ -939,25 +1339,24 @@ export default async function Home() {
                   />
                 </div>
 
-                <div className="mt-3 flex justify-between text-xs text-slate-500">
-                  <span>$0</span>
-                  <span>
-                    {Math.round(breakEvenProgress)}%
-                    toward break-even
-                  </span>
-                </div>
+                <p className="mt-3 text-xs text-slate-500">
+                  {Math.round(
+                    breakEvenProgress,
+                  )}
+                  % toward break-even
+                </p>
               </div>
             ) : (
               <div className="mt-8 rounded-2xl border border-dashed border-slate-700 bg-slate-950/50 px-5 py-8 text-center">
                 <p className="font-bold text-white">
-                  Break-even is not available yet
+                  Break-even is not available
+                  yet
                 </p>
 
                 <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-slate-500">
-                  Add your truck payment, insurance,
-                  recurring deductions, and operating
-                  expenses to calculate the amount you must
-                  earn before becoming profitable.
+                  Add expenses, settlement
+                  deductions, and fixed costs to
+                  calculate your break-even point.
                 </p>
               </div>
             )}
@@ -969,7 +1368,9 @@ export default async function Home() {
                 </p>
 
                 <p className="mt-1 text-lg font-bold text-white">
-                  {formatNumber(loadedMiles)}
+                  {formatNumber(
+                    loadedMiles,
+                  )}
                 </p>
               </div>
 
@@ -979,7 +1380,9 @@ export default async function Home() {
                 </p>
 
                 <p className="mt-1 text-lg font-bold text-white">
-                  {formatNumber(deadheadMiles)}
+                  {formatNumber(
+                    deadheadMiles,
+                  )}
                 </p>
               </div>
 
@@ -991,7 +1394,9 @@ export default async function Home() {
                 <p className="mt-1 text-lg font-bold text-white">
                   {deadheadRate === null
                     ? "—"
-                    : `${deadheadRate.toFixed(1)}%`}
+                    : `${deadheadRate.toFixed(
+                        1,
+                      )}%`}
                 </p>
               </div>
             </div>
@@ -1007,8 +1412,8 @@ export default async function Home() {
             </h2>
 
             <div className="mt-5 grid gap-3">
-              {quickActions.map((action) =>
-                action.href ? (
+              {quickActions.map(
+                (action) => (
                   <Link
                     key={action.label}
                     href={action.href}
@@ -1030,33 +1435,59 @@ export default async function Home() {
                       </span>
                     </span>
                   </Link>
-                ) : (
-                  <div
-                    key={action.label}
-                    aria-disabled="true"
-                    title="Coming soon"
-                    className="flex cursor-not-allowed items-center gap-4 rounded-xl border border-slate-800 bg-slate-950/40 p-4 text-left opacity-60"
-                  >
-                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-800 text-lg font-black text-slate-500">
-                      {action.symbol}
-                    </span>
-
-                    <span>
-                      <span className="block font-bold text-slate-300">
-                        {action.label}
-                      </span>
-
-                      <span className="mt-1 block text-xs text-slate-600">
-                        Coming soon ·{" "}
-                        {
-                          action.description
-                        }
-                      </span>
-                    </span>
-                  </div>
                 ),
               )}
             </div>
+          </article>
+        </section>
+
+        <section className="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <article className="rounded-2xl border border-slate-800 bg-slate-900/80 p-5">
+            <p className="text-sm text-slate-400">
+              Direct expenses
+            </p>
+
+            <p className="mt-3 text-xl font-black text-white">
+              {formatCurrency(
+                directExpenses,
+              )}
+            </p>
+          </article>
+
+          <article className="rounded-2xl border border-slate-800 bg-slate-900/80 p-5">
+            <p className="text-sm text-slate-400">
+              Settlement deductions
+            </p>
+
+            <p className="mt-3 text-xl font-black text-white">
+              {formatCurrency(
+                settlementDeductions,
+              )}
+            </p>
+          </article>
+
+          <article className="rounded-2xl border border-slate-800 bg-slate-900/80 p-5">
+            <p className="text-sm text-slate-400">
+              Prorated fixed costs
+            </p>
+
+            <p className="mt-3 text-xl font-black text-white">
+              {formatCurrency(
+                recurringCosts,
+              )}
+            </p>
+          </article>
+
+          <article className="rounded-2xl border border-slate-800 bg-slate-900/80 p-5">
+            <p className="text-sm text-slate-400">
+              Settlement deposits
+            </p>
+
+            <p className="mt-3 text-xl font-black text-emerald-400">
+              {formatCurrency(
+                netDeposits,
+              )}
+            </p>
           </article>
         </section>
 
@@ -1071,22 +1502,6 @@ export default async function Home() {
                 Latest transactions
               </h2>
             </div>
-
-            <div className="flex items-center gap-3">
-              <Link
-                href="/loads"
-                className="text-sm font-bold text-slate-400 transition hover:text-white"
-              >
-                Loads
-              </Link>
-
-              <Link
-                href="/expenses"
-                className="text-sm font-bold text-sky-400 transition hover:text-sky-300"
-              >
-                Expenses
-              </Link>
-            </div>
           </div>
 
           {recentActivity.length === 0 ? (
@@ -1096,90 +1511,106 @@ export default async function Home() {
               </div>
 
               <p className="mt-4 font-bold text-white">
-                No activity recorded yet
+                No activity in this period
               </p>
 
               <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-slate-500">
-                Your completed loads, expenses,
-                settlements, and deductions will appear
-                here after you begin entering records.
+                Change the reporting period or
+                begin entering records.
               </p>
             </div>
           ) : (
             <div className="divide-y divide-slate-800">
-              {recentActivity.map((activity) => (
-                <article
-                  key={activity.id}
-                  className="flex items-center justify-between gap-4 px-5 py-4 sm:px-6"
-                >
-                  <div className="min-w-0">
-                    <p className="truncate font-bold text-white">
-                      {activity.title}
-                    </p>
+              {recentActivity.map(
+                (activity) => (
+                  <article
+                    key={activity.id}
+                    className="flex items-center justify-between gap-4 px-5 py-4 sm:px-6"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate font-bold text-white">
+                        {activity.title}
+                      </p>
 
-                    <p className="mt-1 truncate text-sm text-slate-500">
-                      {activity.description}
-                    </p>
-                  </div>
+                      <p className="mt-1 truncate text-sm text-slate-500">
+                        {
+                          activity.description
+                        }
+                      </p>
+                    </div>
 
-                  <div className="shrink-0 text-right">
-                    <p
-                      className={
-                        activity.type === "income"
-                          ? "font-bold text-emerald-400"
-                          : "font-bold text-slate-200"
-                      }
-                    >
-                      {activity.type === "income"
-                        ? "+"
-                        : "−"}
-                      {formatCurrency(
-                        Math.abs(activity.amount),
-                      )}
-                    </p>
+                    <div className="shrink-0 text-right">
+                      <p
+                        className={
+                          activity.type ===
+                          "income"
+                            ? "font-bold text-emerald-400"
+                            : "font-bold text-slate-200"
+                        }
+                      >
+                        {activity.type ===
+                        "income"
+                          ? "+"
+                          : "−"}
+                        {formatCurrency(
+                          Math.abs(
+                            activity.amount,
+                          ),
+                        )}
+                      </p>
 
-                    <p className="mt-1 text-xs text-slate-500">
-                      {activity.occurredAt}
-                    </p>
-                  </div>
-                </article>
-              ))}
+                      <p className="mt-1 text-xs text-slate-500">
+                        {
+                          activity.occurredAt
+                        }
+                      </p>
+                    </div>
+                  </article>
+                ),
+              )}
             </div>
           )}
         </section>
 
-        <section className="mt-8 grid gap-4 md:grid-cols-3">
+        <section className="mt-8 grid gap-4 md:grid-cols-4">
           <article className="rounded-2xl border border-slate-800 bg-slate-900/80 p-5">
             <p className="text-sm font-medium text-slate-400">
               Average revenue per load
             </p>
 
             <p className="mt-3 text-2xl font-black text-white">
-              {averageRevenuePerLoad === null
+              {averageRevenuePerLoad ===
+              null
                 ? "—"
                 : formatCurrency(
                     averageRevenuePerLoad,
                   )}
             </p>
-
-            <p className="mt-2 text-xs text-slate-500">
-              Calculated from completed loads
-            </p>
           </article>
 
           <article className="rounded-2xl border border-slate-800 bg-slate-900/80 p-5">
             <p className="text-sm font-medium text-slate-400">
-              Average fuel cost per mile
+              Fuel cost per mile
             </p>
 
             <p className="mt-3 text-2xl font-black text-white">
               {fuelCostPerMile === null
                 ? "—"
-                : formatCurrency(fuelCostPerMile)}
+                : formatCurrency(
+                    fuelCostPerMile,
+                  )}
+            </p>
+          </article>
+
+          <article className="rounded-2xl border border-slate-800 bg-slate-900/80 p-5">
+            <p className="text-sm font-medium text-slate-400">
+              Reimbursements
             </p>
 
-            <p className="mt-2 text-xs text-slate-500">
-              Calculated from fuel expenses and miles
+            <p className="mt-3 text-2xl font-black text-sky-400">
+              {formatCurrency(
+                reimbursements,
+              )}
             </p>
           </article>
 
@@ -1195,46 +1626,34 @@ export default async function Home() {
                     estimatedTaxReserve,
                   )}
             </p>
-
-            <p className="mt-2 text-xs text-slate-500">
-              Initial estimate: 25% of positive profit
-            </p>
           </article>
         </section>
 
         <div className="mt-6 rounded-xl border border-sky-400/20 bg-sky-400/5 px-4 py-3 text-xs leading-5 text-sky-100/80">
-          This dashboard contains no demonstration
-          transactions. Totals will calculate automatically
-          from the records entered into Axleledger.
+          Active fixed costs are prorated across
+          the selected reporting period.
+          Settlement deposits are shown as cash
+          activity but are not added to load
+          revenue, preventing double counting.
         </div>
       </div>
 
-      <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-800 bg-slate-950/95 px-3 py-2 backdrop-blur lg:hidden">
-        <div className="mx-auto grid max-w-md grid-cols-4 gap-1">
+      <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-800 bg-slate-950/95 px-2 py-2 backdrop-blur lg:hidden">
+        <div className="mx-auto grid max-w-lg grid-cols-5 gap-1">
           {navigationItems.map(
-            (item, index) =>
-              item.href ? (
-                <Link
-                  key={item.label}
-                  href={item.href}
-                  className={
-                    index === 0
-                      ? "rounded-xl bg-sky-400/10 px-2 py-3 text-center text-xs font-bold text-sky-300"
-                      : "rounded-xl px-2 py-3 text-center text-xs font-semibold text-slate-500 transition hover:text-slate-200"
-                  }
-                >
-                  {item.label}
-                </Link>
-              ) : (
-                <span
-                  key={item.label}
-                  aria-disabled="true"
-                  title="Coming soon"
-                  className="cursor-not-allowed rounded-xl px-2 py-3 text-center text-xs font-semibold text-slate-700"
-                >
-                  {item.label}
-                </span>
-              ),
+            (item, index) => (
+              <Link
+                key={item.label}
+                href={item.href}
+                className={
+                  index === 0
+                    ? "rounded-xl bg-sky-400/10 px-1 py-3 text-center text-xs font-bold text-sky-300"
+                    : "rounded-xl px-1 py-3 text-center text-xs font-semibold text-slate-500 transition hover:text-slate-200"
+                }
+              >
+                {item.mobileLabel}
+              </Link>
+            ),
           )}
         </div>
       </nav>
