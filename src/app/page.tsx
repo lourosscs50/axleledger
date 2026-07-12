@@ -1,10 +1,19 @@
+import Link from "next/link";
+import { redirect } from "next/navigation";
+
+import { createClient } from "@/lib/supabase/server";
+
 type LoadRecord = {
   id: string;
   loadNumber: string;
   revenue: number;
   loadedMiles: number;
   deadheadMiles: number;
-  status: "planned" | "in-progress" | "completed";
+  status:
+    | "planned"
+    | "in-progress"
+    | "completed"
+    | "cancelled";
   completedAt: string | null;
 };
 
@@ -23,6 +32,42 @@ type ExpenseRecord = {
   category: ExpenseCategory;
   amount: number;
   occurredAt: string;
+  vendor: string | null;
+};
+
+type DatabaseLoadStatus =
+  | "planned"
+  | "in_progress"
+  | "completed"
+  | "cancelled";
+
+type DatabaseLoadRecord = {
+  id: string;
+  load_number: string;
+  gross_revenue: number;
+  loaded_miles: number;
+  deadhead_miles: number;
+  status: DatabaseLoadStatus;
+  delivery_date: string | null;
+  created_at: string;
+};
+
+type DatabaseExpenseCategory =
+  | "fuel"
+  | "maintenance"
+  | "tolls"
+  | "parking"
+  | "scales"
+  | "food"
+  | "supplies"
+  | "other";
+
+type DatabaseExpenseRecord = {
+  id: string;
+  category: DatabaseExpenseCategory;
+  amount: number;
+  expense_date: string;
+  vendor: string | null;
 };
 
 type SettlementRecord = {
@@ -62,53 +107,91 @@ type DashboardMetric = {
 };
 
 /*
-  These arrays intentionally begin empty.
-
-  They will later be replaced with records loaded from the Axleledger database.
-  The calculations below will not need to be rewritten when that happens.
+  Settlements and fixed costs remain empty until
+  those database features are implemented.
 */
-const loads: LoadRecord[] = [];
-const expenses: ExpenseRecord[] = [];
 const settlements: SettlementRecord[] = [];
 const fixedCosts: FixedCostRecord[] = [];
-const recentActivity: ActivityRecord[] = [];
 
 const navigationItems = [
-  "Dashboard",
-  "Loads",
-  "Expenses",
-  "Settlements",
-];
+  {
+    label: "Dashboard",
+    href: "/",
+  },
+  {
+    label: "Loads",
+    href: "/loads",
+  },
+  {
+    label: "Expenses",
+    href: "/expenses",
+  },
+  {
+    label: "Settlements",
+    href: null,
+  },
+] as const;
 
 const quickActions = [
   {
     label: "Add load",
-    description: "Record revenue, route, and miles",
+    description:
+      "Record revenue, route, and miles",
     symbol: "+",
+    href: "/loads#load-form",
   },
   {
     label: "Add expense",
-    description: "Record fuel, tolls, maintenance, and more",
+    description:
+      "Record fuel, tolls, maintenance, and more",
     symbol: "−",
+    href: "/expenses#expense-form",
   },
   {
     label: "Add settlement",
-    description: "Record deductions and your actual deposit",
+    description:
+      "Record deductions and your actual deposit",
     symbol: "$",
+    href: null,
   },
   {
     label: "Manage fixed costs",
-    description: "Set truck payment, insurance, and recurring costs",
+    description:
+      "Set truck payment, insurance, and recurring costs",
     symbol: "=",
+    href: null,
   },
-];
+] as const;
+
+const expenseCategoryLabels: Record<
+  DatabaseExpenseCategory,
+  ExpenseCategory
+> = {
+  fuel: "Fuel",
+  maintenance: "Maintenance",
+  tolls: "Tolls",
+  parking: "Parking",
+  scales: "Scales",
+  food: "Food",
+  supplies: "Supplies",
+  other: "Other",
+};
 
 const currencyFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",
 });
 
-const numberFormatter = new Intl.NumberFormat("en-US");
+const numberFormatter =
+  new Intl.NumberFormat("en-US");
+
+const activityDateFormatter =
+  new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  });
 
 function formatCurrency(value: number) {
   return currencyFormatter.format(value);
@@ -116,6 +199,22 @@ function formatCurrency(value: number) {
 
 function formatNumber(value: number) {
   return numberFormatter.format(value);
+}
+
+function formatActivityDate(
+  value: string | null,
+) {
+  if (!value) {
+    return "Date unavailable";
+  }
+
+  const date = value.includes("T")
+    ? new Date(value)
+    : new Date(`${value}T00:00:00Z`);
+
+  return activityDateFormatter.format(
+    date,
+  );
 }
 
 function formatRate(value: number | null) {
@@ -322,7 +421,181 @@ function MetricCard({
   );
 }
 
-export default function Home() {
+export default async function Home() {
+  const supabase = await createClient();
+
+  const { data: claimsData } =
+    await supabase.auth.getClaims();
+
+  const userId =
+    typeof claimsData?.claims?.sub ===
+    "string"
+      ? claimsData.claims.sub
+      : null;
+
+  if (!userId) {
+    redirect("/login");
+  }
+
+  const [
+    {
+      data: loadsData,
+      error: loadsQueryError,
+    },
+    {
+      data: expensesData,
+      error: expensesQueryError,
+    },
+  ] = await Promise.all([
+    supabase
+      .from("loads")
+      .select(
+        `
+          id,
+          load_number,
+          gross_revenue,
+          loaded_miles,
+          deadhead_miles,
+          status,
+          delivery_date,
+          created_at
+        `,
+      )
+      .eq("user_id", userId)
+      .order("created_at", {
+        ascending: false,
+      }),
+    supabase
+      .from("expenses")
+      .select(
+        `
+          id,
+          category,
+          amount,
+          expense_date,
+          vendor
+        `,
+      )
+      .eq("user_id", userId)
+      .order("expense_date", {
+        ascending: false,
+      })
+      .order("created_at", {
+        ascending: false,
+      }),
+  ]);
+
+  if (loadsQueryError) {
+    console.error(
+      "Unable to retrieve dashboard loads:",
+      loadsQueryError,
+    );
+  }
+
+  if (expensesQueryError) {
+    console.error(
+      "Unable to retrieve dashboard expenses:",
+      expensesQueryError,
+    );
+  }
+
+  const loads = (
+    (loadsData ?? []) as DatabaseLoadRecord[]
+  ).map(
+    (load): LoadRecord => ({
+      id: load.id,
+      loadNumber: load.load_number,
+      revenue: Number(
+        load.gross_revenue,
+      ),
+      loadedMiles: Number(
+        load.loaded_miles,
+      ),
+      deadheadMiles: Number(
+        load.deadhead_miles,
+      ),
+      status:
+        load.status === "in_progress"
+          ? "in-progress"
+          : load.status,
+      completedAt:
+        load.delivery_date ??
+        load.created_at,
+    }),
+  );
+
+  const expenses = (
+    (expensesData ??
+      []) as DatabaseExpenseRecord[]
+  ).map(
+    (expense): ExpenseRecord => ({
+      id: expense.id,
+      category:
+        expenseCategoryLabels[
+          expense.category
+        ],
+      amount: Number(expense.amount),
+      occurredAt: expense.expense_date,
+      vendor: expense.vendor,
+    }),
+  );
+
+  const activityEntries = [
+    ...loads
+      .filter(
+        (load) =>
+          load.status === "completed",
+      )
+      .map((load) => ({
+        id: `load-${load.id}`,
+        title: load.loadNumber,
+        description: "Completed load",
+        amount: load.revenue,
+        occurredAt: formatActivityDate(
+          load.completedAt,
+        ),
+        type: "income" as const,
+        sortDate:
+          load.completedAt ?? "",
+      })),
+    ...expenses.map((expense) => ({
+      id: `expense-${expense.id}`,
+      title:
+        expense.vendor ??
+        `${expense.category} expense`,
+      description: expense.category,
+      amount: expense.amount,
+      occurredAt: formatActivityDate(
+        expense.occurredAt,
+      ),
+      type: "expense" as const,
+      sortDate: expense.occurredAt,
+    })),
+  ];
+
+  const recentActivity: ActivityRecord[] =
+    activityEntries
+      .sort((first, second) =>
+        second.sortDate.localeCompare(
+          first.sortDate,
+        ),
+      )
+      .slice(0, 8)
+      .map((entry) => ({
+        id: entry.id,
+        title: entry.title,
+        description: entry.description,
+        amount: entry.amount,
+        occurredAt: entry.occurredAt,
+        type: entry.type,
+      }));
+
+  const hasDashboardQueryError =
+    Boolean(
+      loadsQueryError ||
+        expensesQueryError,
+    );
+
   const completedLoads = loads.filter(
     (load) => load.status === "completed",
   );
@@ -523,19 +796,31 @@ export default function Home() {
           </div>
 
           <div className="hidden items-center gap-2 lg:flex">
-            {navigationItems.map((item, index) => (
-              <button
-                key={item}
-                type="button"
-                className={
-                  index === 0
-                    ? "rounded-xl bg-sky-400/10 px-4 py-2.5 text-sm font-semibold text-sky-300"
-                    : "rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-400 transition hover:bg-slate-900 hover:text-white"
-                }
-              >
-                {item}
-              </button>
-            ))}
+            {navigationItems.map(
+              (item, index) =>
+                item.href ? (
+                  <Link
+                    key={item.label}
+                    href={item.href}
+                    className={
+                      index === 0
+                        ? "rounded-xl bg-sky-400/10 px-4 py-2.5 text-sm font-semibold text-sky-300"
+                        : "rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-400 transition hover:bg-slate-900 hover:text-white"
+                    }
+                  >
+                    {item.label}
+                  </Link>
+                ) : (
+                  <span
+                    key={item.label}
+                    aria-disabled="true"
+                    title="Coming soon"
+                    className="cursor-not-allowed rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-600"
+                  >
+                    {item.label}
+                  </span>
+                ),
+            )}
           </div>
 
           <button
@@ -570,24 +855,27 @@ export default function Home() {
             Reporting period
 
             <select
-              defaultValue="this-week"
-              className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-sm font-semibold text-white outline-none transition focus:border-sky-400"
+              defaultValue="all-time"
+              disabled
+              className="cursor-not-allowed rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-sm font-semibold text-white opacity-80 outline-none"
             >
-              <option value="this-week">
-                This week
-              </option>
-              <option value="last-week">
-                Last week
-              </option>
-              <option value="this-month">
-                This month
-              </option>
-              <option value="year-to-date">
-                Year to date
+              <option value="all-time">
+                All recorded data
               </option>
             </select>
           </label>
         </section>
+
+        {hasDashboardQueryError ? (
+          <div
+            role="alert"
+            className="mt-6 rounded-xl border border-red-400/20 bg-red-400/10 px-4 py-3 text-sm font-medium text-red-200"
+          >
+            Axleledger could not retrieve all
+            dashboard records. Refresh the page
+            or try again shortly.
+          </div>
+        ) : null}
 
         <section className="mt-7 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {dashboardMetrics.map((metric) => (
@@ -719,27 +1007,55 @@ export default function Home() {
             </h2>
 
             <div className="mt-5 grid gap-3">
-              {quickActions.map((action) => (
-                <button
-                  key={action.label}
-                  type="button"
-                  className="flex items-center gap-4 rounded-xl border border-slate-800 bg-slate-950/60 p-4 text-left transition hover:border-sky-400/60 hover:bg-slate-900"
-                >
-                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-sky-400/10 text-lg font-black text-sky-300">
-                    {action.symbol}
-                  </span>
-
-                  <span>
-                    <span className="block font-bold text-white">
-                      {action.label}
+              {quickActions.map((action) =>
+                action.href ? (
+                  <Link
+                    key={action.label}
+                    href={action.href}
+                    className="flex items-center gap-4 rounded-xl border border-slate-800 bg-slate-950/60 p-4 text-left transition hover:border-sky-400/60 hover:bg-slate-900"
+                  >
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-sky-400/10 text-lg font-black text-sky-300">
+                      {action.symbol}
                     </span>
 
-                    <span className="mt-1 block text-xs text-slate-500">
-                      {action.description}
+                    <span>
+                      <span className="block font-bold text-white">
+                        {action.label}
+                      </span>
+
+                      <span className="mt-1 block text-xs text-slate-500">
+                        {
+                          action.description
+                        }
+                      </span>
                     </span>
-                  </span>
-                </button>
-              ))}
+                  </Link>
+                ) : (
+                  <div
+                    key={action.label}
+                    aria-disabled="true"
+                    title="Coming soon"
+                    className="flex cursor-not-allowed items-center gap-4 rounded-xl border border-slate-800 bg-slate-950/40 p-4 text-left opacity-60"
+                  >
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-800 text-lg font-black text-slate-500">
+                      {action.symbol}
+                    </span>
+
+                    <span>
+                      <span className="block font-bold text-slate-300">
+                        {action.label}
+                      </span>
+
+                      <span className="mt-1 block text-xs text-slate-600">
+                        Coming soon ·{" "}
+                        {
+                          action.description
+                        }
+                      </span>
+                    </span>
+                  </div>
+                ),
+              )}
             </div>
           </article>
         </section>
@@ -756,12 +1072,21 @@ export default function Home() {
               </h2>
             </div>
 
-            <button
-              type="button"
-              className="text-sm font-bold text-sky-400 transition hover:text-sky-300"
-            >
-              View all
-            </button>
+            <div className="flex items-center gap-3">
+              <Link
+                href="/loads"
+                className="text-sm font-bold text-slate-400 transition hover:text-white"
+              >
+                Loads
+              </Link>
+
+              <Link
+                href="/expenses"
+                className="text-sm font-bold text-sky-400 transition hover:text-sky-300"
+              >
+                Expenses
+              </Link>
+            </div>
           </div>
 
           {recentActivity.length === 0 ? (
@@ -886,19 +1211,31 @@ export default function Home() {
 
       <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-800 bg-slate-950/95 px-3 py-2 backdrop-blur lg:hidden">
         <div className="mx-auto grid max-w-md grid-cols-4 gap-1">
-          {navigationItems.map((item, index) => (
-            <button
-              key={item}
-              type="button"
-              className={
-                index === 0
-                  ? "rounded-xl bg-sky-400/10 px-2 py-3 text-xs font-bold text-sky-300"
-                  : "rounded-xl px-2 py-3 text-xs font-semibold text-slate-500 transition hover:text-slate-200"
-              }
-            >
-              {item}
-            </button>
-          ))}
+          {navigationItems.map(
+            (item, index) =>
+              item.href ? (
+                <Link
+                  key={item.label}
+                  href={item.href}
+                  className={
+                    index === 0
+                      ? "rounded-xl bg-sky-400/10 px-2 py-3 text-center text-xs font-bold text-sky-300"
+                      : "rounded-xl px-2 py-3 text-center text-xs font-semibold text-slate-500 transition hover:text-slate-200"
+                  }
+                >
+                  {item.label}
+                </Link>
+              ) : (
+                <span
+                  key={item.label}
+                  aria-disabled="true"
+                  title="Coming soon"
+                  className="cursor-not-allowed rounded-xl px-2 py-3 text-center text-xs font-semibold text-slate-700"
+                >
+                  {item.label}
+                </span>
+              ),
+          )}
         </div>
       </nav>
     </main>
