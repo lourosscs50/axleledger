@@ -15,6 +15,7 @@ export const metadata: Metadata = {
 
 type ExpenseCategory =
   | "fuel"
+  | "def"
   | "maintenance"
   | "tolls"
   | "parking"
@@ -88,6 +89,11 @@ const categoryDetails: Record<
     label: "Fuel",
     className:
       "border-amber-400/20 bg-amber-400/10 text-amber-300",
+  },
+  def: {
+    label: "DEF",
+    className:
+      "border-sky-400/20 bg-sky-400/10 text-sky-300",
   },
   maintenance: {
     label: "Maintenance",
@@ -204,6 +210,14 @@ export default async function ExpensesPage({
       data: loadsData,
       error: loadsQueryError,
     },
+    {
+      data: fuelLinksData,
+      error: fuelLinksError,
+    },
+    {
+      data: defLinksData,
+      error: defLinksError,
+    },
   ] = await Promise.all([
     supabase
       .from("expenses")
@@ -245,6 +259,14 @@ export default async function ExpensesPage({
       .order("created_at", {
         ascending: false,
       }),
+    supabase
+      .from("fuel_transactions")
+      .select("expense_id")
+      .eq("user_id", userId),
+    supabase
+      .from("def_transactions")
+      .select("expense_id")
+      .eq("user_id", userId),
   ]);
 
   const expenses =
@@ -252,6 +274,24 @@ export default async function ExpensesPage({
 
   const loads =
     (loadsData ?? []) as LoadOption[];
+
+  const structuredExpenseIds =
+    new Set<string>([
+      ...(fuelLinksData ?? []).map(
+        (
+          record: {
+            expense_id: string;
+          },
+        ) => record.expense_id,
+      ),
+      ...(defLinksData ?? []).map(
+        (
+          record: {
+            expense_id: string;
+          },
+        ) => record.expense_id,
+      ),
+    ]);
 
   const loadsById = new Map(
     loads.map((load) => [
@@ -262,7 +302,11 @@ export default async function ExpensesPage({
 
   const editingExpense = edit
     ? expenses.find(
-        (expense) => expense.id === edit,
+        (expense) =>
+          expense.id === edit &&
+          !structuredExpenseIds.has(
+            expense.id,
+          ),
       )
     : undefined;
 
@@ -381,6 +425,17 @@ export default async function ExpensesPage({
             Your loads could not be retrieved.
             Expenses can still be recorded
             without linking them to a load.
+          </div>
+        ) : null}
+
+        {fuelLinksError || defLinksError ? (
+          <div
+            role="alert"
+            className="mt-6 rounded-xl border border-amber-400/20 bg-amber-400/10 px-4 py-3 text-sm font-medium text-amber-200"
+          >
+            Structured fuel links could not be
+            verified. Manage diesel and DEF
+            from Fuel operations.
           </div>
         ) : null}
 
@@ -560,23 +615,34 @@ export default async function ExpensesPage({
                               )}
                             </p>
 
-                            <div className="flex items-center gap-2">
+                            {structuredExpenseIds.has(
+                              expense.id,
+                            ) ? (
                               <Link
-                                href={`/expenses?edit=${expense.id}#expense-form`}
-                                className="rounded-lg border border-sky-400/20 bg-sky-400/10 px-3 py-2 text-xs font-bold text-sky-300 transition hover:border-sky-400/50 hover:bg-sky-400/20"
+                                href="/fuel"
+                                className="rounded-lg border border-amber-400/20 bg-amber-400/10 px-3 py-2 text-xs font-bold text-amber-300 transition hover:border-amber-400/50 hover:bg-amber-400/20"
                               >
-                                Edit
+                                Manage in Fuel
                               </Link>
+                            ) : (
+                              <div className="flex items-center gap-2">
+                                <Link
+                                  href={`/expenses?edit=${expense.id}#expense-form`}
+                                  className="rounded-lg border border-sky-400/20 bg-sky-400/10 px-3 py-2 text-xs font-bold text-sky-300 transition hover:border-sky-400/50 hover:bg-sky-400/20"
+                                >
+                                  Edit
+                                </Link>
 
-                              <DeleteExpenseForm
-                                expenseId={
-                                  expense.id
-                                }
-                                description={
-                                  description
-                                }
-                              />
-                            </div>
+                                <DeleteExpenseForm
+                                  expenseId={
+                                    expense.id
+                                  }
+                                  description={
+                                    description
+                                  }
+                                />
+                              </div>
+                            )}
                           </div>
                         </div>
 

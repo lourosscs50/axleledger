@@ -38,6 +38,7 @@ type LoadRecord = {
 
 type ExpenseCategory =
   | "fuel"
+  | "def"
   | "maintenance"
   | "tolls"
   | "parking"
@@ -120,6 +121,11 @@ const navigationItems = [
     href: "/expenses",
   },
   {
+    label: "Fuel",
+    mobileLabel: "Fuel",
+    href: "/fuel",
+  },
+  {
     label: "Settlements",
     mobileLabel: "Pay",
     href: "/settlements",
@@ -142,9 +148,16 @@ const quickActions = [
   {
     label: "Add expense",
     description:
-      "Record fuel, tolls, maintenance, and more",
+      "Record tolls, maintenance, parking, and more",
     symbol: "−",
     href: "/expenses#expense-form",
+  },
+  {
+    label: "Add fuel or DEF",
+    description:
+      "Capture gallons, pricing, discount, and odometer",
+    symbol: "F",
+    href: "/fuel#fuel-entry",
   },
   {
     label: "Add settlement",
@@ -178,6 +191,7 @@ const expenseLabels: Record<
   string
 > = {
   fuel: "Fuel",
+  def: "DEF",
   maintenance: "Maintenance",
   tolls: "Tolls",
   parking: "Parking",
@@ -1639,7 +1653,7 @@ export default async function Home({
       </div>
 
       <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-800 bg-slate-950/95 px-2 py-2 backdrop-blur lg:hidden">
-        <div className="mx-auto grid max-w-lg grid-cols-5 gap-1">
+        <div className="mx-auto grid max-w-xl grid-cols-6 gap-1">
           {navigationItems.map(
             (item, index) => (
               <Link
