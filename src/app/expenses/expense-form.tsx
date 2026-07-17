@@ -13,6 +13,7 @@ import {
 
 type ExpenseCategory =
   | "fuel"
+  | "def"
   | "maintenance"
   | "tolls"
   | "parking"
@@ -52,10 +53,6 @@ const categories: Array<{
   value: ExpenseCategory;
   label: string;
 }> = [
-  {
-    value: "fuel",
-    label: "Fuel",
-  },
   {
     value: "maintenance",
     label: "Maintenance",
@@ -200,6 +197,19 @@ export function ExpenseForm({
           />
         ) : null}
 
+        <div className="rounded-xl border border-amber-400/20 bg-amber-400/10 px-4 py-3 text-xs leading-5 text-amber-100">
+          Record diesel and DEF from{" "}
+          <Link
+            href="/fuel#fuel-entry"
+            className="font-bold text-amber-300 underline underline-offset-2"
+          >
+            Fuel operations
+          </Link>
+          . Axleledger creates the matching
+          expense automatically so costs are
+          never counted twice.
+        </div>
+
         <label className="block">
           <span className="text-sm font-semibold text-slate-300">
             Category
@@ -209,7 +219,7 @@ export function ExpenseForm({
             name="category"
             defaultValue={
               editingExpense?.category ??
-              "fuel"
+              "maintenance"
             }
             className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none focus:border-sky-400"
           >
