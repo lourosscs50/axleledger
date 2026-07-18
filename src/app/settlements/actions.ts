@@ -5,15 +5,27 @@ import { redirect } from "next/navigation";
 
 import { createClient } from "@/lib/supabase/server";
 
+import type {
+  SettlementLineItemKind,
+} from "./types";
+
 type SettlementValues = {
+  statement_number: string | null;
   settlement_date: string;
+  period_start_date: string | null;
+  period_end_date: string | null;
   carrier_or_company: string | null;
-  gross_pay: number;
-  deductions: number;
-  reimbursements: number;
-  net_deposit: number;
   notes: string | null;
 };
+
+const lineItemKinds = [
+  "earning",
+  "deduction",
+  "reimbursement",
+] as const;
+
+const allowedLineItemKinds =
+  new Set<string>(lineItemKinds);
 
 function readText(
   formData: FormData,
@@ -26,33 +38,70 @@ function readText(
     : "";
 }
 
-function redirectWithError(
-  message: string,
-  editId?: string,
-): never {
-  const params = new URLSearchParams({
-    error: message,
-  });
+function buildSettlementUrl({
+  error,
+  success,
+  manageId,
+  editId,
+  anchor = "settlement-workspace",
+}: {
+  error?: string;
+  success?: string;
+  manageId?: string;
+  editId?: string;
+  anchor?: string;
+}) {
+  const params = new URLSearchParams();
+
+  if (error) {
+    params.set("error", error);
+  }
+
+  if (success) {
+    params.set("success", success);
+    params.set("saved", Date.now().toString());
+  }
+
+  if (manageId) {
+    params.set("manage", manageId);
+  }
 
   if (editId) {
     params.set("edit", editId);
   }
 
+  const query = params.toString();
+
+  return `/settlements${
+    query ? `?${query}` : ""
+  }${anchor ? `#${anchor}` : ""}`;
+}
+
+function redirectWithError(
+  message: string,
+  manageId?: string,
+  editId?: string,
+): never {
   redirect(
-    `/settlements?${params.toString()}#settlement-form`,
+    buildSettlementUrl({
+      error: message,
+      manageId,
+      editId,
+    }),
   );
 }
 
 function redirectWithSuccess(
   message: string,
+  manageId?: string,
+  anchor = "settlement-workspace",
 ): never {
-  const params = new URLSearchParams({
-    success: message,
-    saved: Date.now().toString(),
-  });
-
   redirect(
-    `/settlements?${params.toString()}`,
+    buildSettlementUrl({
+      success: message,
+      manageId,
+      anchor,
+    }),
   );
 }
 
@@ -60,6 +109,7 @@ function requireText(
   formData: FormData,
   fieldName: string,
   displayName: string,
+  manageId?: string,
   editId?: string,
 ) {
   const value = readText(
@@ -70,34 +120,7 @@ function requireText(
   if (!value) {
     redirectWithError(
       `${displayName} is required.`,
-      editId,
-    );
-  }
-
-  return value;
-}
-
-function readNonnegativeNumber(
-  formData: FormData,
-  fieldName: string,
-  displayName: string,
-  editId?: string,
-) {
-  const rawValue = requireText(
-    formData,
-    fieldName,
-    displayName,
-    editId,
-  );
-
-  const value = Number(rawValue);
-
-  if (
-    !Number.isFinite(value) ||
-    value < 0
-  ) {
-    redirectWithError(
-      `${displayName} must be zero or greater.`,
+      manageId,
       editId,
     );
   }
@@ -108,6 +131,7 @@ function readNonnegativeNumber(
 function validateDate(
   value: string,
   displayName: string,
+  manageId?: string,
   editId?: string,
 ) {
   const datePattern =
@@ -116,6 +140,7 @@ function validateDate(
   if (!datePattern.test(value)) {
     redirectWithError(
       `${displayName} must be a valid date.`,
+      manageId,
       editId,
     );
   }
@@ -134,7 +159,116 @@ function validateDate(
   if (normalizedDate !== value) {
     redirectWithError(
       `${displayName} must be a valid date.`,
+      manageId,
       editId,
+    );
+  }
+
+  return value;
+}
+
+function readOptionalDate(
+  formData: FormData,
+  fieldName: string,
+  displayName: string,
+  manageId?: string,
+  editId?: string,
+) {
+  const value = readText(
+    formData,
+    fieldName,
+  );
+
+  return value
+    ? validateDate(
+        value,
+        displayName,
+        manageId,
+        editId,
+      )
+    : null;
+}
+
+function readPositiveNumber(
+  formData: FormData,
+  fieldName: string,
+  displayName: string,
+  manageId?: string,
+) {
+  const rawValue = requireText(
+    formData,
+    fieldName,
+    displayName,
+    manageId,
+  );
+
+  const value = Number(rawValue);
+
+  if (
+    !Number.isFinite(value) ||
+    value <= 0
+  ) {
+    redirectWithError(
+      `${displayName} must be greater than zero.`,
+      manageId,
+    );
+  }
+
+  return value;
+}
+
+function readOptionalNonnegativeNumber(
+  formData: FormData,
+  fieldName: string,
+  displayName: string,
+  manageId?: string,
+) {
+  const rawValue = readText(
+    formData,
+    fieldName,
+  );
+
+  if (!rawValue) {
+    return null;
+  }
+
+  const value = Number(rawValue);
+
+  if (
+    !Number.isFinite(value) ||
+    value < 0
+  ) {
+    redirectWithError(
+      `${displayName} must be zero or greater.`,
+      manageId,
+    );
+  }
+
+  return value;
+}
+
+function readSignedNonzeroNumber(
+  formData: FormData,
+  fieldName: string,
+  displayName: string,
+  manageId: string,
+) {
+  const rawValue = requireText(
+    formData,
+    fieldName,
+    displayName,
+    manageId,
+  );
+
+  const value = Number(rawValue);
+
+  if (
+    !Number.isFinite(value) ||
+    value === 0
+  ) {
+    redirectWithError(
+      `${displayName} must be a non-zero amount.`,
+      manageId,
     );
   }
 
@@ -143,6 +277,7 @@ function validateDate(
 
 function readSettlementValues(
   formData: FormData,
+  manageId?: string,
   editId?: string,
 ): SettlementValues {
   const settlementDate = validateDate(
@@ -150,44 +285,58 @@ function readSettlementValues(
       formData,
       "settlement_date",
       "Settlement date",
+      manageId,
       editId,
     ),
     "Settlement date",
+    manageId,
     editId,
   );
 
+  const periodStartDate =
+    readOptionalDate(
+      formData,
+      "period_start_date",
+      "Period start date",
+      manageId,
+      editId,
+    );
+
+  const periodEndDate =
+    readOptionalDate(
+      formData,
+      "period_end_date",
+      "Period end date",
+      manageId,
+      editId,
+    );
+
+  if (
+    periodStartDate &&
+    periodEndDate &&
+    periodEndDate < periodStartDate
+  ) {
+    redirectWithError(
+      "Period end date cannot be before the start date.",
+      manageId,
+      editId,
+    );
+  }
+
   return {
+    statement_number:
+      readText(
+        formData,
+        "statement_number",
+      ) || null,
     settlement_date: settlementDate,
+    period_start_date: periodStartDate,
+    period_end_date: periodEndDate,
     carrier_or_company:
       readText(
         formData,
         "carrier_or_company",
       ) || null,
-    gross_pay: readNonnegativeNumber(
-      formData,
-      "gross_pay",
-      "Gross pay",
-      editId,
-    ),
-    deductions: readNonnegativeNumber(
-      formData,
-      "deductions",
-      "Deductions",
-      editId,
-    ),
-    reimbursements:
-      readNonnegativeNumber(
-        formData,
-        "reimbursements",
-        "Reimbursements",
-        editId,
-      ),
-    net_deposit: readNonnegativeNumber(
-      formData,
-      "net_deposit",
-      "Net deposit",
-      editId,
-    ),
     notes:
       readText(formData, "notes") ||
       null,
@@ -215,9 +364,52 @@ async function getAuthenticatedClient() {
   };
 }
 
+async function validateLinkedLoad(
+  supabase: Awaited<
+    ReturnType<typeof createClient>
+  >,
+  userId: string,
+  loadId: string | null,
+  settlementId: string,
+) {
+  if (!loadId) {
+    return;
+  }
+
+  const {
+    data: linkedLoad,
+    error,
+  } = await supabase
+    .from("loads")
+    .select("id")
+    .eq("id", loadId)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (error || !linkedLoad) {
+    redirectWithError(
+      "Select a valid load.",
+      settlementId,
+    );
+  }
+}
+
 function revalidateSettlementPages() {
   revalidatePath("/settlements");
   revalidatePath("/");
+}
+
+function handleActionError(
+  label: string,
+  error: unknown,
+  settlementId?: string,
+): never {
+  console.error(label, error);
+
+  redirectWithError(
+    "Axleledger could not complete that settlement action.",
+    settlementId,
+  );
 }
 
 export async function createSettlement(
@@ -229,28 +421,35 @@ export async function createSettlement(
   const { supabase, userId } =
     await getAuthenticatedClient();
 
-  const { error } = await supabase
+  const {
+    data: createdSettlement,
+    error,
+  } = await supabase
     .from("settlements")
     .insert({
       user_id: userId,
       ...values,
-    });
+      gross_pay: 0,
+      deductions: 0,
+      reimbursements: 0,
+      net_deposit: 0,
+      status: "draft",
+    })
+    .select("id")
+    .single();
 
-  if (error) {
-    console.error(
+  if (error || !createdSettlement) {
+    handleActionError(
       "Unable to create settlement:",
       error,
-    );
-
-    redirectWithError(
-      "Axleledger could not save the settlement.",
     );
   }
 
   revalidateSettlementPages();
 
   redirectWithSuccess(
-    "Settlement added successfully.",
+    "Draft settlement created. Add its line items next.",
+    createdSettlement.id,
   );
 }
 
@@ -265,6 +464,7 @@ export async function updateSettlement(
 
   const values = readSettlementValues(
     formData,
+    settlementId,
     settlementId,
   );
 
@@ -283,13 +483,9 @@ export async function updateSettlement(
     .maybeSingle();
 
   if (error || !updatedSettlement) {
-    console.error(
+    handleActionError(
       "Unable to update settlement:",
       error,
-    );
-
-    redirectWithError(
-      "Axleledger could not update the settlement.",
       settlementId,
     );
   }
@@ -297,7 +493,8 @@ export async function updateSettlement(
   revalidateSettlementPages();
 
   redirectWithSuccess(
-    "Settlement updated successfully.",
+    "Settlement details updated.",
+    settlementId,
   );
 }
 
@@ -325,13 +522,10 @@ export async function deleteSettlement(
     .maybeSingle();
 
   if (error || !deletedSettlement) {
-    console.error(
+    handleActionError(
       "Unable to delete settlement:",
       error,
-    );
-
-    redirectWithError(
-      "Axleledger could not delete the settlement.",
+      settlementId,
     );
   }
 
@@ -339,5 +533,431 @@ export async function deleteSettlement(
 
   redirectWithSuccess(
     "Settlement deleted.",
+    undefined,
+    "settlement-form",
+  );
+}
+
+export async function addSettlementLineItem(
+  formData: FormData,
+) {
+  const settlementId = requireText(
+    formData,
+    "settlement_id",
+    "Settlement ID",
+  );
+
+  const kindValue = requireText(
+    formData,
+    "kind",
+    "Line-item type",
+    settlementId,
+  );
+
+  if (
+    !allowedLineItemKinds.has(
+      kindValue,
+    )
+  ) {
+    redirectWithError(
+      "Select a valid line-item type.",
+      settlementId,
+    );
+  }
+
+  const kind =
+    kindValue as SettlementLineItemKind;
+
+  const loadId =
+    readText(formData, "load_id") ||
+    null;
+
+  const authorizationReference =
+    kind === "deduction"
+      ? readText(
+          formData,
+          "authorization_reference",
+        ) || null
+      : null;
+
+  const balanceAfter =
+    kind === "deduction"
+      ? readOptionalNonnegativeNumber(
+          formData,
+          "balance_after",
+          "Balance after",
+          settlementId,
+        )
+      : null;
+
+  const { supabase, userId } =
+    await getAuthenticatedClient();
+
+  await validateLinkedLoad(
+    supabase,
+    userId,
+    loadId,
+    settlementId,
+  );
+
+  const { error } = await supabase
+    .from("settlement_line_items")
+    .insert({
+      user_id: userId,
+      settlement_id: settlementId,
+      load_id: loadId,
+      kind,
+      category: requireText(
+        formData,
+        "category",
+        "Category",
+        settlementId,
+      ),
+      description: requireText(
+        formData,
+        "description",
+        "Description",
+        settlementId,
+      ),
+      amount: readPositiveNumber(
+        formData,
+        "amount",
+        "Amount",
+        settlementId,
+      ),
+      authorization_reference:
+        authorizationReference,
+      balance_after: balanceAfter,
+    });
+
+  if (error) {
+    handleActionError(
+      "Unable to add settlement line item:",
+      error,
+      settlementId,
+    );
+  }
+
+  revalidateSettlementPages();
+
+  redirectWithSuccess(
+    "Settlement line item added.",
+    settlementId,
+  );
+}
+
+export async function deleteSettlementLineItem(
+  formData: FormData,
+) {
+  const settlementId = requireText(
+    formData,
+    "settlement_id",
+    "Settlement ID",
+  );
+
+  const lineItemId = requireText(
+    formData,
+    "line_item_id",
+    "Line-item ID",
+    settlementId,
+  );
+
+  const { supabase, userId } =
+    await getAuthenticatedClient();
+
+  const {
+    data: deletedLineItem,
+    error,
+  } = await supabase
+    .from("settlement_line_items")
+    .delete()
+    .eq("id", lineItemId)
+    .eq("settlement_id", settlementId)
+    .eq("user_id", userId)
+    .select("id")
+    .maybeSingle();
+
+  if (error || !deletedLineItem) {
+    handleActionError(
+      "Unable to delete settlement line item:",
+      error,
+      settlementId,
+    );
+  }
+
+  revalidateSettlementPages();
+
+  redirectWithSuccess(
+    "Settlement line item deleted.",
+    settlementId,
+  );
+}
+
+export async function linkSettlementLoad(
+  formData: FormData,
+) {
+  const settlementId = requireText(
+    formData,
+    "settlement_id",
+    "Settlement ID",
+  );
+
+  const loadId = requireText(
+    formData,
+    "load_id",
+    "Load",
+    settlementId,
+  );
+
+  const { supabase, userId } =
+    await getAuthenticatedClient();
+
+  await validateLinkedLoad(
+    supabase,
+    userId,
+    loadId,
+    settlementId,
+  );
+
+  const { error } = await supabase
+    .from("settlement_loads")
+    .upsert(
+      {
+        user_id: userId,
+        settlement_id: settlementId,
+        load_id: loadId,
+      },
+      {
+        onConflict:
+          "settlement_id,load_id",
+        ignoreDuplicates: true,
+      },
+    );
+
+  if (error) {
+    handleActionError(
+      "Unable to link settlement load:",
+      error,
+      settlementId,
+    );
+  }
+
+  revalidateSettlementPages();
+
+  redirectWithSuccess(
+    "Load linked to settlement.",
+    settlementId,
+  );
+}
+
+export async function unlinkSettlementLoad(
+  formData: FormData,
+) {
+  const settlementId = requireText(
+    formData,
+    "settlement_id",
+    "Settlement ID",
+  );
+
+  const loadId = requireText(
+    formData,
+    "load_id",
+    "Load",
+    settlementId,
+  );
+
+  const { supabase, userId } =
+    await getAuthenticatedClient();
+
+  const { error } = await supabase
+    .from("settlement_loads")
+    .delete()
+    .eq("settlement_id", settlementId)
+    .eq("load_id", loadId)
+    .eq("user_id", userId);
+
+  if (error) {
+    handleActionError(
+      "Unable to unlink settlement load:",
+      error,
+      settlementId,
+    );
+  }
+
+  revalidateSettlementPages();
+
+  redirectWithSuccess(
+    "Load removed from settlement.",
+    settlementId,
+  );
+}
+
+async function runLifecycleRpc(
+  functionName: string,
+  settlementId: string,
+  args: Record<string, unknown>,
+  successMessage: string,
+) {
+  const { supabase } =
+    await getAuthenticatedClient();
+
+  const { error } = await supabase.rpc(
+    functionName,
+    {
+      p_settlement_id: settlementId,
+      ...args,
+    },
+  );
+
+  if (error) {
+    handleActionError(
+      `Unable to run ${functionName}:`,
+      error,
+      settlementId,
+    );
+  }
+
+  revalidateSettlementPages();
+
+  redirectWithSuccess(
+    successMessage,
+    settlementId,
+  );
+}
+
+export async function submitSettlementForReview(
+  formData: FormData,
+) {
+  const settlementId = requireText(
+    formData,
+    "settlement_id",
+    "Settlement ID",
+  );
+
+  await runLifecycleRpc(
+    "submit_settlement_for_review",
+    settlementId,
+    {},
+    "Settlement submitted for review.",
+  );
+}
+
+export async function returnSettlementToDraft(
+  formData: FormData,
+) {
+  const settlementId = requireText(
+    formData,
+    "settlement_id",
+    "Settlement ID",
+  );
+
+  const reason = requireText(
+    formData,
+    "reason",
+    "Return reason",
+    settlementId,
+  );
+
+  await runLifecycleRpc(
+    "return_settlement_to_draft",
+    settlementId,
+    {
+      p_reason: reason,
+    },
+    "Settlement returned to draft.",
+  );
+}
+
+export async function approveSettlement(
+  formData: FormData,
+) {
+  const settlementId = requireText(
+    formData,
+    "settlement_id",
+    "Settlement ID",
+  );
+
+  await runLifecycleRpc(
+    "approve_settlement",
+    settlementId,
+    {},
+    "Settlement approved and snapshotted.",
+  );
+}
+
+export async function markSettlementPaid(
+  formData: FormData,
+) {
+  const settlementId = requireText(
+    formData,
+    "settlement_id",
+    "Settlement ID",
+  );
+
+  await runLifecycleRpc(
+    "mark_settlement_paid",
+    settlementId,
+    {},
+    "Settlement marked paid.",
+  );
+}
+
+export async function reopenSettlement(
+  formData: FormData,
+) {
+  const settlementId = requireText(
+    formData,
+    "settlement_id",
+    "Settlement ID",
+  );
+
+  const reason = requireText(
+    formData,
+    "reason",
+    "Reopen reason",
+    settlementId,
+  );
+
+  await runLifecycleRpc(
+    "reopen_settlement",
+    settlementId,
+    {
+      p_reason: reason,
+    },
+    "Settlement reopened for correction.",
+  );
+}
+
+export async function addSettlementAdjustment(
+  formData: FormData,
+) {
+  const settlementId = requireText(
+    formData,
+    "settlement_id",
+    "Settlement ID",
+  );
+
+  const amount = readSignedNonzeroNumber(
+    formData,
+    "amount",
+    "Adjustment amount",
+    settlementId,
+  );
+
+  const reason = requireText(
+    formData,
+    "reason",
+    "Adjustment reason",
+    settlementId,
+  );
+
+  await runLifecycleRpc(
+    "add_settlement_adjustment",
+    settlementId,
+    {
+      p_amount: amount,
+      p_reason: reason,
+    },
+    "Settlement adjustment recorded.",
   );
 }
