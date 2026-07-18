@@ -63,6 +63,12 @@ type SettlementRecord = {
   deductions: number;
   reimbursements: number;
   net_deposit: number;
+  status:
+    | "draft"
+    | "review_needed"
+    | "approved"
+    | "paid"
+    | "reopened";
 };
 
 type FixedCostRecord = {
@@ -736,7 +742,8 @@ export default async function Home({
           gross_pay,
           deductions,
           reimbursements,
-          net_deposit
+          net_deposit,
+          status
         `,
       )
       .eq("user_id", userId),
@@ -855,13 +862,28 @@ export default async function Home({
       ),
     );
 
+  const recognizedSettlements =
+    settlements.filter(
+      (settlement) =>
+        settlement.status ===
+          "approved" ||
+        settlement.status === "paid",
+    );
+
   const periodSettlements =
-    settlements.filter((settlement) =>
-      isWithinPeriod(
-        settlement.settlement_date,
-        periodStart,
-        periodEnd,
-      ),
+    recognizedSettlements.filter(
+      (settlement) =>
+        isWithinPeriod(
+          settlement.settlement_date,
+          periodStart,
+          periodEnd,
+        ),
+    );
+
+  const paidPeriodSettlements =
+    periodSettlements.filter(
+      (settlement) =>
+        settlement.status === "paid",
     );
 
   const activeFixedCosts =
@@ -971,7 +993,7 @@ export default async function Home({
       : null;
 
   const netDeposits = sumValues(
-    periodSettlements,
+    paidPeriodSettlements,
     (settlement) =>
       Number(
         settlement.net_deposit,
@@ -1170,7 +1192,7 @@ export default async function Home({
           type: "expense" as const,
         }),
       ),
-      ...periodSettlements.map(
+      ...paidPeriodSettlements.map(
         (settlement) => ({
           id: `settlement-${settlement.id}`,
           title:
@@ -1646,9 +1668,11 @@ export default async function Home({
         <div className="mt-6 rounded-xl border border-sky-400/20 bg-sky-400/5 px-4 py-3 text-xs leading-5 text-sky-100/80">
           Active fixed costs are prorated across
           the selected reporting period.
-          Settlement deposits are shown as cash
-          activity but are not added to load
-          revenue, preventing double counting.
+          Only approved and paid settlements
+          contribute deductions and reimbursements.
+          Only paid settlements appear as cash
+          deposits, preventing draft values from
+          affecting operating results.
         </div>
       </div>
 
