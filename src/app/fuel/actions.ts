@@ -422,7 +422,7 @@ export async function deleteTruck(
 
     redirectWithError(
       error?.code === "23503"
-        ? "This truck has fuel or DEF history and cannot be deleted."
+        ? "This truck has fuel, DEF, or maintenance history and cannot be deleted."
         : "Axleledger could not delete the truck.",
     );
   }

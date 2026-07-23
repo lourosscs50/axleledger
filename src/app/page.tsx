@@ -80,6 +80,33 @@ type FixedCostRecord = {
   is_active: boolean;
 };
 
+type MaintenanceRecord = {
+  id: string;
+  truck_id: string | null;
+  status: "scheduled" | "completed";
+  work_description: string;
+  scheduled_date: string | null;
+  scheduled_odometer: number | null;
+  completed_date: string | null;
+  odometer: number | null;
+  next_service_date: string | null;
+  next_service_odometer:
+    | number
+    | null;
+};
+
+type OdometerRecord = {
+  truck_id: string | null;
+  odometer: number | null;
+};
+
+type MaintenanceAlert = {
+  id: string;
+  title: string;
+  detail: string;
+  tone: "warning" | "bad";
+};
+
 type ActivityRecord = {
   id: string;
   title: string;
@@ -132,6 +159,11 @@ const navigationItems = [
     href: "/fuel",
   },
   {
+    label: "Maintenance",
+    mobileLabel: "Service",
+    href: "/maintenance",
+  },
+  {
     label: "Settlements",
     mobileLabel: "Pay",
     href: "/settlements",
@@ -164,6 +196,13 @@ const quickActions = [
       "Capture gallons, pricing, discount, and odometer",
     symbol: "F",
     href: "/fuel#fuel-entry",
+  },
+  {
+    label: "Add maintenance",
+    description:
+      "Schedule service or record completed work",
+    symbol: "M",
+    href: "/maintenance#maintenance-form",
   },
   {
     label: "Add settlement",
@@ -275,6 +314,118 @@ function addDays(
   );
 
   return result;
+}
+
+function updateCurrentOdometer(
+  map: Map<string, number>,
+  record: OdometerRecord,
+) {
+  if (
+    !record.truck_id ||
+    record.odometer === null
+  ) {
+    return;
+  }
+
+  const value = Number(record.odometer);
+  const current =
+    map.get(record.truck_id) ?? 0;
+
+  if (value > current) {
+    map.set(record.truck_id, value);
+  }
+}
+
+function getMaintenanceAlert(
+  record: MaintenanceRecord,
+  currentOdometer: number | null,
+  today: string,
+): MaintenanceAlert | null {
+  const targetDate =
+    record.status === "scheduled"
+      ? record.scheduled_date
+      : record.next_service_date;
+
+  const targetOdometer =
+    record.status === "scheduled"
+      ? record.scheduled_odometer
+      : record.next_service_odometer;
+
+  if (
+    !targetDate &&
+    targetOdometer === null
+  ) {
+    return null;
+  }
+
+  const dueSoonDate = formatDateOnly(
+    addDays(parseDateOnly(today), 14),
+  );
+
+  const overdueByDate =
+    Boolean(
+      targetDate &&
+        targetDate < today,
+    );
+
+  const overdueByOdometer =
+    targetOdometer !== null &&
+    currentOdometer !== null &&
+    currentOdometer >=
+      targetOdometer;
+
+  const dueSoonByDate =
+    Boolean(
+      targetDate &&
+        targetDate >= today &&
+        targetDate <= dueSoonDate,
+    );
+
+  const dueSoonByOdometer =
+    targetOdometer !== null &&
+    currentOdometer !== null &&
+    targetOdometer >
+      currentOdometer &&
+    targetOdometer <=
+      currentOdometer + 1000;
+
+  if (
+    !overdueByDate &&
+    !overdueByOdometer &&
+    !dueSoonByDate &&
+    !dueSoonByOdometer
+  ) {
+    return null;
+  }
+
+  const detail = [
+    targetDate
+      ? `Date ${formatActivityDate(
+          targetDate,
+        )}`
+      : null,
+    targetOdometer !== null
+      ? `${formatNumber(
+          targetOdometer,
+        )} miles`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  return {
+    id: record.id,
+    title:
+      record.status === "scheduled"
+        ? record.work_description
+        : `Next ${record.work_description}`,
+    detail,
+    tone:
+      overdueByDate ||
+      overdueByOdometer
+        ? "bad"
+        : "warning",
+  };
 }
 
 function getTodayDateString() {
@@ -700,6 +851,18 @@ export default async function Home({
       data: fixedCostsData,
       error: fixedCostsError,
     },
+    {
+      data: maintenanceData,
+      error: maintenanceError,
+    },
+    {
+      data: fuelOdometerData,
+      error: fuelOdometerError,
+    },
+    {
+      data: defOdometerData,
+      error: defOdometerError,
+    },
   ] = await Promise.all([
     supabase
       .from("loads")
@@ -760,6 +923,33 @@ export default async function Home({
         `,
       )
       .eq("user_id", userId),
+    supabase
+      .from("maintenance_records")
+      .select(
+        `
+          id,
+          truck_id,
+          status,
+          work_description,
+          scheduled_date,
+          scheduled_odometer,
+          completed_date,
+          odometer,
+          next_service_date,
+          next_service_odometer
+        `,
+      )
+      .eq("user_id", userId),
+    supabase
+      .from("fuel_transactions")
+      .select("truck_id, odometer")
+      .eq("user_id", userId)
+      .not("odometer", "is", null),
+    supabase
+      .from("def_transactions")
+      .select("truck_id, odometer")
+      .eq("user_id", userId)
+      .not("odometer", "is", null),
   ]);
 
   if (loadsError) {
@@ -790,6 +980,27 @@ export default async function Home({
     );
   }
 
+  if (maintenanceError) {
+    console.error(
+      "Dashboard maintenance query failed:",
+      maintenanceError,
+    );
+  }
+
+  if (fuelOdometerError) {
+    console.error(
+      "Dashboard fuel odometer query failed:",
+      fuelOdometerError,
+    );
+  }
+
+  if (defOdometerError) {
+    console.error(
+      "Dashboard DEF odometer query failed:",
+      defOdometerError,
+    );
+  }
+
   const loads =
     (loadsData ?? []) as LoadRecord[];
 
@@ -805,8 +1016,93 @@ export default async function Home({
     (fixedCostsData ??
       []) as FixedCostRecord[];
 
+  const maintenanceRecords =
+    (maintenanceData ??
+      []) as MaintenanceRecord[];
+
+  const currentOdometers =
+    new Map<string, number>();
+
+  (
+    (fuelOdometerData ??
+      []) as OdometerRecord[]
+  ).forEach((record) => {
+    updateCurrentOdometer(
+      currentOdometers,
+      record,
+    );
+  });
+
+  (
+    (defOdometerData ??
+      []) as OdometerRecord[]
+  ).forEach((record) => {
+    updateCurrentOdometer(
+      currentOdometers,
+      record,
+    );
+  });
+
+  maintenanceRecords.forEach(
+    (record) => {
+      updateCurrentOdometer(
+        currentOdometers,
+        {
+          truck_id: record.truck_id,
+          odometer: record.odometer,
+        },
+      );
+    },
+  );
+
   const today =
     getTodayDateString();
+
+  const maintenanceAlerts =
+    maintenanceRecords
+      .map((record) => {
+        const currentOdometer =
+          record.truck_id
+            ? currentOdometers.get(
+                record.truck_id,
+              ) ?? null
+            : null;
+
+        return getMaintenanceAlert(
+          record,
+          currentOdometer,
+          today,
+        );
+      })
+      .filter(
+        (
+          alert,
+        ): alert is MaintenanceAlert =>
+          alert !== null,
+      )
+      .sort((first, second) => {
+        if (
+          first.tone === second.tone
+        ) {
+          return first.title.localeCompare(
+            second.title,
+          );
+        }
+
+        return first.tone === "bad"
+          ? -1
+          : 1;
+      });
+
+  const overdueMaintenanceCount =
+    maintenanceAlerts.filter(
+      (alert) =>
+        alert.tone === "bad",
+    ).length;
+
+  const dueSoonMaintenanceCount =
+    maintenanceAlerts.length -
+    overdueMaintenanceCount;
 
   const allDates = [
     ...loads.map(
@@ -826,6 +1122,18 @@ export default async function Home({
       (fixedCost) =>
         fixedCost.effective_date,
     ),
+    ...maintenanceRecords
+      .map(
+        (record) =>
+          record.completed_date ??
+          record.scheduled_date,
+      )
+      .filter(
+        (
+          value,
+        ): value is string =>
+          Boolean(value),
+      ),
   ];
 
   const {
@@ -1224,7 +1532,10 @@ export default async function Home({
     loadsError ||
       expensesError ||
       settlementsError ||
-      fixedCostsError,
+      fixedCostsError ||
+      maintenanceError ||
+      fuelOdometerError ||
+      defOdometerError,
   );
 
   return (
@@ -1528,6 +1839,100 @@ export default async function Home({
         </section>
 
         <section className="mt-8 overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/80">
+          <div className="flex flex-col gap-4 border-b border-slate-800 px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+            <div>
+              <p className="text-sm font-semibold text-sky-400">
+                Equipment readiness
+              </p>
+
+              <h2 className="mt-1 text-xl font-bold text-white">
+                Maintenance attention
+              </h2>
+            </div>
+
+            <Link
+              href="/maintenance"
+              className="self-start rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5 text-sm font-bold text-slate-300 transition hover:border-sky-400 hover:text-white"
+            >
+              Open maintenance
+            </Link>
+          </div>
+
+          <div className="grid gap-3 border-b border-slate-800 p-5 sm:grid-cols-2 sm:px-6">
+            <div className="rounded-xl border border-amber-400/20 bg-amber-400/10 p-4">
+              <p className="text-xs font-semibold text-amber-200">
+                Due soon
+              </p>
+
+              <p className="mt-2 text-2xl font-black text-amber-300">
+                {formatNumber(
+                  dueSoonMaintenanceCount,
+                )}
+              </p>
+            </div>
+
+            <div className="rounded-xl border border-red-400/20 bg-red-400/10 p-4">
+              <p className="text-xs font-semibold text-red-200">
+                Overdue
+              </p>
+
+              <p className="mt-2 text-2xl font-black text-red-300">
+                {formatNumber(
+                  overdueMaintenanceCount,
+                )}
+              </p>
+            </div>
+          </div>
+
+          {maintenanceAlerts.length === 0 ? (
+            <div className="px-5 py-8 text-center sm:px-6">
+              <p className="font-bold text-white">
+                No maintenance alerts
+              </p>
+
+              <p className="mt-2 text-sm text-slate-500">
+                Scheduled work and next-service
+                targets are currently outside the
+                due-soon window.
+              </p>
+            </div>
+          ) : (
+            <div className="divide-y divide-slate-800">
+              {maintenanceAlerts
+                .slice(0, 5)
+                .map((alert) => (
+                  <article
+                    key={alert.id}
+                    className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6"
+                  >
+                    <div>
+                      <p className="font-bold text-white">
+                        {alert.title}
+                      </p>
+
+                      <p className="mt-1 text-sm text-slate-500">
+                        {alert.detail}
+                      </p>
+                    </div>
+
+                    <span
+                      className={`self-start rounded-full border px-3 py-1 text-xs font-bold ${
+                        alert.tone === "bad"
+                          ? toneStyles.bad.badge
+                          : toneStyles.warning.badge
+                      }`}
+                    >
+                      {alert.tone === "bad"
+                        ? "Overdue"
+                        : "Due soon"}
+                    </span>
+                  </article>
+                ))}
+            </div>
+          )}
+        </section>
+
+        <section className="mt-8 overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/80">
           <div className="flex items-center justify-between border-b border-slate-800 px-5 py-5 sm:px-6">
             <div>
               <p className="text-sm font-semibold text-sky-400">
@@ -1673,11 +2078,14 @@ export default async function Home({
           Only paid settlements appear as cash
           deposits, preventing draft values from
           affecting operating results.
+          Maintenance expenses are already
+          included through the expense ledger;
+          service alerts do not add costs again.
         </div>
       </div>
 
       <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-800 bg-slate-950/95 px-2 py-2 backdrop-blur lg:hidden">
-        <div className="mx-auto grid max-w-xl grid-cols-6 gap-1">
+        <div className="mx-auto grid max-w-2xl grid-cols-7 gap-1">
           {navigationItems.map(
             (item, index) => (
               <Link

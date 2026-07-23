@@ -218,6 +218,10 @@ export default async function ExpensesPage({
       data: defLinksData,
       error: defLinksError,
     },
+    {
+      data: maintenanceLinksData,
+      error: maintenanceLinksError,
+    },
   ] = await Promise.all([
     supabase
       .from("expenses")
@@ -267,6 +271,11 @@ export default async function ExpensesPage({
       .from("def_transactions")
       .select("expense_id")
       .eq("user_id", userId),
+    supabase
+      .from("maintenance_records")
+      .select("expense_id")
+      .eq("user_id", userId)
+      .not("expense_id", "is", null),
   ]);
 
   const expenses =
@@ -275,7 +284,7 @@ export default async function ExpensesPage({
   const loads =
     (loadsData ?? []) as LoadOption[];
 
-  const structuredExpenseIds =
+  const fuelExpenseIds =
     new Set<string>([
       ...(fuelLinksData ?? []).map(
         (
@@ -291,6 +300,32 @@ export default async function ExpensesPage({
           },
         ) => record.expense_id,
       ),
+    ]);
+
+  const maintenanceExpenseIds =
+    new Set<string>(
+      (maintenanceLinksData ?? [])
+        .map(
+          (
+            record: {
+              expense_id:
+                | string
+                | null;
+            },
+          ) => record.expense_id,
+        )
+        .filter(
+          (
+            expenseId,
+          ): expenseId is string =>
+            Boolean(expenseId),
+        ),
+    );
+
+  const structuredExpenseIds =
+    new Set<string>([
+      ...fuelExpenseIds,
+      ...maintenanceExpenseIds,
     ]);
 
   const loadsById = new Map(
@@ -428,14 +463,17 @@ export default async function ExpensesPage({
           </div>
         ) : null}
 
-        {fuelLinksError || defLinksError ? (
+        {fuelLinksError ||
+        defLinksError ||
+        maintenanceLinksError ? (
           <div
             role="alert"
             className="mt-6 rounded-xl border border-amber-400/20 bg-amber-400/10 px-4 py-3 text-sm font-medium text-amber-200"
           >
-            Structured fuel links could not be
-            verified. Manage diesel and DEF
-            from Fuel operations.
+            Structured expense links could not
+            be fully verified. Manage diesel and
+            DEF from Fuel operations and service
+            work from Maintenance.
           </div>
         ) : null}
 
@@ -615,7 +653,7 @@ export default async function ExpensesPage({
                               )}
                             </p>
 
-                            {structuredExpenseIds.has(
+                            {fuelExpenseIds.has(
                               expense.id,
                             ) ? (
                               <Link
@@ -623,6 +661,15 @@ export default async function ExpensesPage({
                                 className="rounded-lg border border-amber-400/20 bg-amber-400/10 px-3 py-2 text-xs font-bold text-amber-300 transition hover:border-amber-400/50 hover:bg-amber-400/20"
                               >
                                 Manage in Fuel
+                              </Link>
+                            ) : maintenanceExpenseIds.has(
+                                expense.id,
+                              ) ? (
+                              <Link
+                                href="/maintenance"
+                                className="rounded-lg border border-violet-400/20 bg-violet-400/10 px-3 py-2 text-xs font-bold text-violet-300 transition hover:border-violet-400/50 hover:bg-violet-400/20"
+                              >
+                                Manage in Maintenance
                               </Link>
                             ) : (
                               <div className="flex items-center gap-2">

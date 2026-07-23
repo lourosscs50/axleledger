@@ -54,10 +54,6 @@ const categories: Array<{
   label: string;
 }> = [
   {
-    value: "maintenance",
-    label: "Maintenance",
-  },
-  {
     value: "tolls",
     label: "Tolls",
   },
@@ -205,9 +201,16 @@ export function ExpenseForm({
           >
             Fuel operations
           </Link>
+          {" "}and service work from{" "}
+          <Link
+            href="/maintenance#maintenance-form"
+            className="font-bold text-amber-300 underline underline-offset-2"
+          >
+            Maintenance
+          </Link>
           . Axleledger creates the matching
-          expense automatically so costs are
-          never counted twice.
+          expense automatically so structured
+          costs are never counted twice.
         </div>
 
         <label className="block">
@@ -219,7 +222,7 @@ export function ExpenseForm({
             name="category"
             defaultValue={
               editingExpense?.category ??
-              "maintenance"
+              "tolls"
             }
             className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none focus:border-sky-400"
           >
@@ -324,8 +327,8 @@ export function ExpenseForm({
           </select>
 
           <p className="mt-2 text-xs leading-5 text-slate-500">
-            Link direct costs such as fuel,
-            tolls, parking, or scales to the
+            Link direct costs such as tolls,
+            parking, scales, or supplies to the
             load that caused them.
           </p>
         </label>
