@@ -62,12 +62,6 @@ export type SettlementAuditRecord = {
   created_at: string;
 };
 
-export type SettlementLoadLink = {
-  settlement_id: string;
-  load_id: string;
-  created_at: string;
-};
-
 export type ApprovalSnapshotRecord = {
   id: string;
   settlement_id: string;

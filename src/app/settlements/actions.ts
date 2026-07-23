@@ -507,21 +507,17 @@ export async function deleteSettlement(
     "Settlement ID",
   );
 
-  const { supabase, userId } =
+  const { supabase } =
     await getAuthenticatedClient();
 
-  const {
-    data: deletedSettlement,
-    error,
-  } = await supabase
-    .from("settlements")
-    .delete()
-    .eq("id", settlementId)
-    .eq("user_id", userId)
-    .select("id")
-    .maybeSingle();
+  const { error } = await supabase.rpc(
+    "delete_settlement",
+    {
+      p_settlement_id: settlementId,
+    },
+  );
 
-  if (error || !deletedSettlement) {
+  if (error) {
     handleActionError(
       "Unable to delete settlement:",
       error,
@@ -568,9 +564,38 @@ export async function addSettlementLineItem(
   const kind =
     kindValue as SettlementLineItemKind;
 
+  const rawCategory = requireText(
+    formData,
+    "category",
+    "Category",
+    settlementId,
+  ).toLowerCase().replaceAll(" ", "_");
+
+  const category =
+    kind === "earning" &&
+    new Set([
+      "linehaul",
+      "line_haul",
+      "load_pay",
+      "load_revenue",
+    ]).has(rawCategory)
+      ? "load_revenue"
+      : rawCategory;
+
   const loadId =
     readText(formData, "load_id") ||
     null;
+
+  if (
+    kind === "earning" &&
+    category === "load_revenue" &&
+    !loadId
+  ) {
+    redirectWithError(
+      "Select the load represented by this load-revenue line.",
+      settlementId,
+    );
+  }
 
   const authorizationReference =
     kind === "deduction"
@@ -607,12 +632,7 @@ export async function addSettlementLineItem(
       settlement_id: settlementId,
       load_id: loadId,
       kind,
-      category: requireText(
-        formData,
-        "category",
-        "Category",
-        settlementId,
-      ),
+      category,
       description: requireText(
         formData,
         "description",
@@ -631,9 +651,19 @@ export async function addSettlementLineItem(
     });
 
   if (error) {
-    handleActionError(
+    console.error(
       "Unable to add settlement line item:",
       error,
+    );
+
+    redirectWithError(
+      error.code === "23505"
+        ? "That load already has a primary load-revenue line on this settlement. Add accessorial pay under a different category."
+        : error.message.includes(
+              "Load revenue requires",
+            )
+          ? error.message
+          : "Axleledger could not add that settlement line.",
       settlementId,
     );
   }
@@ -689,105 +719,6 @@ export async function deleteSettlementLineItem(
 
   redirectWithSuccess(
     "Settlement line item deleted.",
-    settlementId,
-  );
-}
-
-export async function linkSettlementLoad(
-  formData: FormData,
-) {
-  const settlementId = requireText(
-    formData,
-    "settlement_id",
-    "Settlement ID",
-  );
-
-  const loadId = requireText(
-    formData,
-    "load_id",
-    "Load",
-    settlementId,
-  );
-
-  const { supabase, userId } =
-    await getAuthenticatedClient();
-
-  await validateLinkedLoad(
-    supabase,
-    userId,
-    loadId,
-    settlementId,
-  );
-
-  const { error } = await supabase
-    .from("settlement_loads")
-    .upsert(
-      {
-        user_id: userId,
-        settlement_id: settlementId,
-        load_id: loadId,
-      },
-      {
-        onConflict:
-          "settlement_id,load_id",
-        ignoreDuplicates: true,
-      },
-    );
-
-  if (error) {
-    handleActionError(
-      "Unable to link settlement load:",
-      error,
-      settlementId,
-    );
-  }
-
-  revalidateSettlementPages();
-
-  redirectWithSuccess(
-    "Load linked to settlement.",
-    settlementId,
-  );
-}
-
-export async function unlinkSettlementLoad(
-  formData: FormData,
-) {
-  const settlementId = requireText(
-    formData,
-    "settlement_id",
-    "Settlement ID",
-  );
-
-  const loadId = requireText(
-    formData,
-    "load_id",
-    "Load",
-    settlementId,
-  );
-
-  const { supabase, userId } =
-    await getAuthenticatedClient();
-
-  const { error } = await supabase
-    .from("settlement_loads")
-    .delete()
-    .eq("settlement_id", settlementId)
-    .eq("load_id", loadId)
-    .eq("user_id", userId);
-
-  if (error) {
-    handleActionError(
-      "Unable to unlink settlement load:",
-      error,
-      settlementId,
-    );
-  }
-
-  revalidateSettlementPages();
-
-  redirectWithSuccess(
-    "Load removed from settlement.",
     settlementId,
   );
 }

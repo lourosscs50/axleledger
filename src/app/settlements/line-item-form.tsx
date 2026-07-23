@@ -32,6 +32,45 @@ export function LineItemForm({
         value={settlementId}
       />
 
+      <label className="lg:col-span-2">
+        <span className="text-sm font-semibold text-slate-300">
+          Load
+        </span>
+
+        <select
+          name="load_id"
+          defaultValue=""
+          className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none focus:border-sky-400"
+        >
+          <option value="">
+            No specific load
+          </option>
+
+          {loads.map((load) => (
+            <option
+              key={load.id}
+              value={load.id}
+            >
+              {load.load_number}
+              {" · "}
+              {load.origin_city},{" "}
+              {load.origin_state}
+              {" → "}
+              {load.destination_city},{" "}
+              {load.destination_state}
+            </option>
+          ))}
+        </select>
+
+        <p className="mt-2 text-xs leading-5 text-slate-500">
+          Add each load shown on the
+          settlement as its own earning line.
+          Load revenue requires a selected
+          load. Accessorials may reference the
+          same load as separate lines.
+        </p>
+      </label>
+
       <label>
         <span className="text-sm font-semibold text-slate-300">
           Type
@@ -62,7 +101,7 @@ export function LineItemForm({
         <input
           name="category"
           required
-          placeholder="Example: linehaul, fuel, insurance"
+          placeholder="Example: load_revenue, detention, fuel"
           className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none placeholder:text-slate-600 focus:border-sky-400"
         />
       </label>
@@ -75,14 +114,14 @@ export function LineItemForm({
         <input
           name="description"
           required
-          placeholder="Description exactly as shown on the statement"
+          placeholder="Example: Load SA22904024"
           className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none placeholder:text-slate-600 focus:border-sky-400"
         />
       </label>
 
       <label>
         <span className="text-sm font-semibold text-slate-300">
-          Amount
+          Statement amount
         </span>
 
         <input
@@ -94,38 +133,20 @@ export function LineItemForm({
           placeholder="0.00"
           className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none placeholder:text-slate-600 focus:border-sky-400"
         />
+
+        <p className="mt-2 text-xs leading-5 text-slate-500">
+          Enter the amount actually printed on
+          the settlement statement.
+        </p>
       </label>
 
-      <label>
-        <span className="text-sm font-semibold text-slate-300">
-          Related load
-        </span>
-
-        <select
-          name="load_id"
-          defaultValue=""
-          className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none focus:border-sky-400"
-        >
-          <option value="">
-            No specific load
-          </option>
-
-          {loads.map((load) => (
-            <option
-              key={load.id}
-              value={load.id}
-            >
-              {load.load_number}
-              {" · "}
-              {load.origin_city},{" "}
-              {load.origin_state}
-              {" → "}
-              {load.destination_city},{" "}
-              {load.destination_state}
-            </option>
-          ))}
-        </select>
-      </label>
+      <div className="rounded-xl border border-sky-400/20 bg-sky-400/5 px-4 py-3 text-xs leading-5 text-sky-100/80">
+        Use <strong>load_revenue</strong> for
+        the primary payment for a load. Use
+        categories such as detention, layover,
+        stop_pay, or tonu for additional pay on
+        that same load.
+      </div>
 
       <label>
         <span className="text-sm font-semibold text-slate-300">
@@ -165,7 +186,7 @@ export function LineItemForm({
         type="submit"
         className="lg:col-span-2 rounded-xl bg-sky-500 px-5 py-3.5 font-black text-white transition hover:bg-sky-400"
       >
-        Add line item
+        Add settlement line
       </button>
     </form>
   );
