@@ -10,20 +10,15 @@ import { DeleteSettlementForm } from "./delete-settlement-form";
 import { LifecycleActions } from "./lifecycle-actions";
 import { LineItemForm } from "./line-item-form";
 import { SettlementForm } from "./settlement-form";
-import {
-  linkSettlementLoad,
-} from "./actions";
 import type {
   ApprovalSnapshotRecord,
   LoadOption,
   SettlementAdjustmentRecord,
   SettlementAuditRecord,
   SettlementLineItemRecord,
-  SettlementLoadLink,
   SettlementRecord,
   SettlementStatus,
 } from "./types";
-import { UnlinkLoadForm } from "./unlink-load-form";
 
 export const metadata: Metadata = {
   title: "Settlements",
@@ -277,10 +272,6 @@ export default async function SettlementsPage({
       error: lineItemsError,
     },
     {
-      data: loadLinksData,
-      error: loadLinksError,
-    },
-    {
       data: adjustmentsData,
       error: adjustmentsError,
     },
@@ -341,19 +332,6 @@ export default async function SettlementsPage({
           amount,
           authorization_reference,
           balance_after,
-          created_at
-        `,
-      )
-      .eq("user_id", userId)
-      .order("created_at", {
-        ascending: true,
-      }),
-    supabase
-      .from("settlement_loads")
-      .select(
-        `
-          settlement_id,
-          load_id,
           created_at
         `,
       )
@@ -436,10 +414,6 @@ export default async function SettlementsPage({
     (lineItemsData ??
       []) as SettlementLineItemRecord[];
 
-  const loadLinks =
-    (loadLinksData ??
-      []) as SettlementLoadLink[];
-
   const adjustments =
     (adjustmentsData ??
       []) as SettlementAdjustmentRecord[];
@@ -461,9 +435,6 @@ export default async function SettlementsPage({
 
   const lineItemsBySettlement =
     groupBySettlement(lineItems);
-
-  const loadLinksBySettlement =
-    groupBySettlement(loadLinks);
 
   const adjustmentsBySettlement =
     groupBySettlement(adjustments);
@@ -529,7 +500,6 @@ export default async function SettlementsPage({
   const hasQueryError = Boolean(
     settlementsError ||
       lineItemsError ||
-      loadLinksError ||
       adjustmentsError ||
       auditError ||
       snapshotsError ||
@@ -543,12 +513,14 @@ export default async function SettlementsPage({
         ) ?? []
       : [];
 
-  const selectedLoadLinks =
-    selectedSettlement
-      ? loadLinksBySettlement.get(
-          selectedSettlement.id,
-        ) ?? []
-      : [];
+  const selectedLoadCount = new Set(
+    selectedLineItems
+      .map((lineItem) => lineItem.load_id)
+      .filter(
+        (loadId): loadId is string =>
+          Boolean(loadId),
+      ),
+  ).size;
 
   const selectedAdjustments =
     selectedSettlement
@@ -569,17 +541,6 @@ export default async function SettlementsPage({
           selectedSettlement.id,
         ) ?? []
       : [];
-
-  const selectedLinkedLoadIds = new Set(
-    selectedLoadLinks.map(
-      (link) => link.load_id,
-    ),
-  );
-
-  const availableLoads = loads.filter(
-    (load) =>
-      !selectedLinkedLoadIds.has(load.id),
-  );
 
   return (
     <main className="min-h-screen pb-16">
@@ -783,6 +744,19 @@ export default async function SettlementsPage({
                     </Link>
                   ) : null}
 
+                  <DeleteSettlementForm
+                    settlementId={
+                      selectedSettlement.id
+                    }
+                    description={`settlement dated ${formatDate(
+                      selectedSettlement.settlement_date,
+                    )}`}
+                    status={
+                      selectedSettlement.status
+                    }
+                    className="rounded-xl border border-red-400/20 bg-red-400/10 px-4 py-2.5 text-sm font-bold text-red-300 transition hover:bg-red-400/20"
+                  />
+
                   <Link
                     href="/settlements#settlement-form"
                     className="rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5 text-sm font-bold text-slate-300 transition hover:text-white"
@@ -862,8 +836,17 @@ export default async function SettlementsPage({
                     Calculated statement
                   </p>
                   <h3 className="mt-1 text-xl font-black text-white">
-                    Line items
+                    Loads and statement lines
                   </h3>
+                  <p className="mt-2 text-xs text-slate-500">
+                    {formatNumber(
+                      selectedLoadCount,
+                    )}{" "}
+                    {selectedLoadCount === 1
+                      ? "load"
+                      : "loads"}{" "}
+                    represented by line items.
+                  </p>
                 </div>
 
                 {selectedLineItems.length === 0 ? (
@@ -997,7 +980,7 @@ export default async function SettlementsPage({
                 ) ? (
                   <div className="border-t border-slate-800 p-5 sm:p-6">
                     <p className="text-sm font-bold text-white">
-                      Add a statement line
+                      Add a load or statement line
                     </p>
                     <LineItemForm
                       settlementId={
@@ -1011,133 +994,6 @@ export default async function SettlementsPage({
               </article>
 
               <div className="space-y-6">
-                <article className="rounded-2xl border border-slate-800 bg-slate-900/80 p-5 sm:p-6">
-                  <p className="text-sm font-semibold text-sky-400">
-                    Load reconciliation
-                  </p>
-                  <h3 className="mt-1 text-xl font-black text-white">
-                    Linked loads
-                  </h3>
-
-                  <div className="mt-5 space-y-3">
-                    {selectedLoadLinks.length ===
-                    0 ? (
-                      <p className="text-sm text-slate-500">
-                        No loads linked.
-                      </p>
-                    ) : (
-                      selectedLoadLinks.map(
-                        (link) => {
-                          const load =
-                            loadsById.get(
-                              link.load_id,
-                            );
-
-                          if (!load) {
-                            return null;
-                          }
-
-                          return (
-                            <div
-                              key={link.load_id}
-                              className="flex items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-950/60 p-3"
-                            >
-                              <div>
-                                <p className="font-bold text-white">
-                                  {load.load_number}
-                                </p>
-                                <p className="mt-1 text-xs text-slate-500">
-                                  {load.origin_city},{" "}
-                                  {load.origin_state}
-                                  {" → "}
-                                  {
-                                    load.destination_city
-                                  }
-                                  ,{" "}
-                                  {
-                                    load.destination_state
-                                  }
-                                </p>
-                              </div>
-
-                              {isEditable(
-                                selectedSettlement.status,
-                              ) ? (
-                                <UnlinkLoadForm
-                                  settlementId={
-                                    selectedSettlement.id
-                                  }
-                                  loadId={load.id}
-                                  loadNumber={
-                                    load.load_number
-                                  }
-                                />
-                              ) : null}
-                            </div>
-                          );
-                        },
-                      )
-                    )}
-                  </div>
-
-                  {isEditable(
-                    selectedSettlement.status,
-                  ) &&
-                  availableLoads.length > 0 ? (
-                    <form
-                      action={linkSettlementLoad}
-                      className="mt-5 space-y-3"
-                    >
-                      <input
-                        type="hidden"
-                        name="settlement_id"
-                        value={
-                          selectedSettlement.id
-                        }
-                      />
-
-                      <select
-                        name="load_id"
-                        required
-                        defaultValue=""
-                        className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none focus:border-sky-400"
-                      >
-                        <option value="" disabled>
-                          Select a load
-                        </option>
-                        {availableLoads.map(
-                          (load) => (
-                            <option
-                              key={load.id}
-                              value={load.id}
-                            >
-                              {load.load_number}
-                              {" · "}
-                              {load.origin_city},{" "}
-                              {load.origin_state}
-                              {" → "}
-                              {
-                                load.destination_city
-                              }
-                              ,{" "}
-                              {
-                                load.destination_state
-                              }
-                            </option>
-                          ),
-                        )}
-                      </select>
-
-                      <button
-                        type="submit"
-                        className="w-full rounded-xl border border-sky-400/20 bg-sky-400/10 px-4 py-3 font-bold text-sky-300 transition hover:bg-sky-400/20"
-                      >
-                        Link load
-                      </button>
-                    </form>
-                  ) : null}
-                </article>
-
                 <article className="rounded-2xl border border-slate-800 bg-slate-900/80 p-5 sm:p-6">
                   <p className="text-sm font-semibold text-amber-400">
                     Post-approval corrections
@@ -1377,6 +1233,18 @@ export default async function SettlementsPage({
                         settlement.id,
                       )?.length ?? 0;
 
+                    const loadCount = new Set(
+                      recordLineItems
+                        .map(
+                          (lineItem) =>
+                            lineItem.load_id,
+                        )
+                        .filter(
+                          (loadId): loadId is string =>
+                            Boolean(loadId),
+                        ),
+                    ).size;
+
                     return (
                       <section
                         key={settlement.id}
@@ -1410,6 +1278,13 @@ export default async function SettlementsPage({
                               )}{" "}
                               line items ·{" "}
                               {formatNumber(
+                                loadCount,
+                              )}{" "}
+                              {loadCount === 1
+                                ? "load"
+                                : "loads"}{" "}
+                              ·{" "}
+                              {formatNumber(
                                 snapshotCount,
                               )}{" "}
                               approval snapshots
@@ -1439,24 +1314,25 @@ export default async function SettlementsPage({
                               {isEditable(
                                 settlement.status,
                               ) ? (
-                                <>
-                                  <Link
-                                    href={`/settlements?manage=${settlement.id}&edit=${settlement.id}#settlement-form`}
-                                    className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-bold text-slate-300 transition hover:text-white"
-                                  >
-                                    Edit
-                                  </Link>
-
-                                  <DeleteSettlementForm
-                                    settlementId={
-                                      settlement.id
-                                    }
-                                    description={`settlement dated ${formatDate(
-                                      settlement.settlement_date,
-                                    )}`}
-                                  />
-                                </>
+                                <Link
+                                  href={`/settlements?manage=${settlement.id}&edit=${settlement.id}#settlement-form`}
+                                  className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-bold text-slate-300 transition hover:text-white"
+                                >
+                                  Edit
+                                </Link>
                               ) : null}
+
+                              <DeleteSettlementForm
+                                settlementId={
+                                  settlement.id
+                                }
+                                description={`settlement dated ${formatDate(
+                                  settlement.settlement_date,
+                                )}`}
+                                status={
+                                  settlement.status
+                                }
+                              />
                             </div>
                           </div>
                         </div>
