@@ -35,6 +35,10 @@ export type SettlementLineItemRecord = {
   id: string;
   settlement_id: string;
   load_id: string | null;
+  expense_id: string | null;
+  source_type: "expense" | null;
+  source_amount: number | null;
+  variance_reason: string | null;
   kind: SettlementLineItemKind;
   category: string;
   description: string;
@@ -76,4 +80,15 @@ export type LoadOption = {
   origin_state: string;
   destination_city: string;
   destination_state: string;
+};
+
+export type ExpenseOption = {
+  id: string;
+  load_id: string | null;
+  category: string;
+  amount: number;
+  expense_date: string;
+  vendor: string | null;
+  notes: string | null;
+  load_label: string | null;
 };

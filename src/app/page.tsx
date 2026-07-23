@@ -71,6 +71,17 @@ type SettlementRecord = {
     | "reopened";
 };
 
+type SettlementLineItemRecord = {
+  settlement_id: string;
+  expense_id: string | null;
+  kind:
+    | "earning"
+    | "deduction"
+    | "reimbursement";
+  amount: number;
+  source_amount: number | null;
+};
+
 type FixedCostRecord = {
   id: string;
   name: string;
@@ -848,6 +859,10 @@ export default async function Home({
       error: settlementsError,
     },
     {
+      data: settlementLineItemsData,
+      error: settlementLineItemsError,
+    },
+    {
       data: fixedCostsData,
       error: fixedCostsError,
     },
@@ -907,6 +922,18 @@ export default async function Home({
           reimbursements,
           net_deposit,
           status
+        `,
+      )
+      .eq("user_id", userId),
+    supabase
+      .from("settlement_line_items")
+      .select(
+        `
+          settlement_id,
+          expense_id,
+          kind,
+          amount,
+          source_amount
         `,
       )
       .eq("user_id", userId),
@@ -973,6 +1000,13 @@ export default async function Home({
     );
   }
 
+  if (settlementLineItemsError) {
+    console.error(
+      "Dashboard settlement line-items query failed:",
+      settlementLineItemsError,
+    );
+  }
+
   if (fixedCostsError) {
     console.error(
       "Dashboard fixed costs query failed:",
@@ -1011,6 +1045,10 @@ export default async function Home({
   const settlements =
     (settlementsData ??
       []) as SettlementRecord[];
+
+  const settlementLineItems =
+    (settlementLineItemsData ??
+      []) as SettlementLineItemRecord[];
 
   const fixedCosts =
     (fixedCostsData ??
@@ -1225,14 +1263,61 @@ export default async function Home({
       Number(expense.amount),
   );
 
-  const settlementDeductions =
-    sumValues(
-      periodSettlements,
-      (settlement) =>
-        Number(
-          settlement.deductions,
+  const periodSettlementIds =
+    new Set(
+      periodSettlements.map(
+        (settlement) => settlement.id,
+      ),
+    );
+
+  const periodDeductionLines =
+    settlementLineItems.filter(
+      (lineItem) =>
+        lineItem.kind === "deduction" &&
+        periodSettlementIds.has(
+          lineItem.settlement_id,
         ),
     );
+
+  const linkedExpenseSourceTotal =
+    sumValues(
+      periodDeductionLines.filter(
+        (lineItem) =>
+          Boolean(lineItem.expense_id),
+      ),
+      (lineItem) =>
+        Number(
+          lineItem.source_amount ?? 0,
+        ),
+    );
+
+  const linkedExpenseStatementTotal =
+    sumValues(
+      periodDeductionLines.filter(
+        (lineItem) =>
+          Boolean(lineItem.expense_id),
+      ),
+      (lineItem) =>
+        Number(lineItem.amount),
+    );
+
+  const linkedExpenseVariance =
+    linkedExpenseStatementTotal -
+    linkedExpenseSourceTotal;
+
+  const manualSettlementDeductions =
+    sumValues(
+      periodDeductionLines.filter(
+        (lineItem) =>
+          !lineItem.expense_id,
+      ),
+      (lineItem) =>
+        Number(lineItem.amount),
+    );
+
+  const settlementDeductions =
+    manualSettlementDeductions +
+    linkedExpenseVariance;
 
   const recurringCosts = sumValues(
     activeFixedCosts,
@@ -1380,7 +1465,7 @@ export default async function Home({
                   totalIncome) *
                   100,
               )}% of income`
-            : "Direct, settlement, and recurring costs",
+            : "Ledger expenses, reconciliation variances, and recurring costs",
         statusLabel:
           expenseStatus,
         tone: expenseTone,
@@ -1532,6 +1617,7 @@ export default async function Home({
     loadsError ||
       expensesError ||
       settlementsError ||
+      settlementLineItemsError ||
       fixedCostsError ||
       maintenanceError ||
       fuelOdometerError ||
@@ -1803,7 +1889,7 @@ export default async function Home({
 
           <article className="rounded-2xl border border-slate-800 bg-slate-900/80 p-5">
             <p className="text-sm text-slate-400">
-              Settlement deductions
+              Settlement-only costs
             </p>
 
             <p className="mt-3 text-xl font-black text-white">
@@ -2075,6 +2161,11 @@ export default async function Home({
           the selected reporting period.
           Only approved and paid settlements
           contribute deductions and reimbursements.
+          Operating expenses linked to settlements
+          remain counted once through the expense
+          ledger; only manual settlement deductions
+          and statement-to-ledger variances add
+          settlement-only costs.
           Only paid settlements appear as cash
           deposits, preventing draft values from
           affecting operating results.
