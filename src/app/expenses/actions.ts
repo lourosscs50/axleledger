@@ -6,7 +6,6 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 
 const expenseCategories = [
-  "maintenance",
   "tolls",
   "parking",
   "scales",
