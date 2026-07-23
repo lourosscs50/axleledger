@@ -222,6 +222,10 @@ export default async function ExpensesPage({
       data: maintenanceLinksData,
       error: maintenanceLinksError,
     },
+    {
+      data: settlementLinksData,
+      error: settlementLinksError,
+    },
   ] = await Promise.all([
     supabase
       .from("expenses")
@@ -276,6 +280,11 @@ export default async function ExpensesPage({
       .select("expense_id")
       .eq("user_id", userId)
       .not("expense_id", "is", null),
+    supabase
+      .from("settlement_line_items")
+      .select("expense_id, settlement_id")
+      .eq("user_id", userId)
+      .not("expense_id", "is", null),
   ]);
 
   const expenses =
@@ -328,6 +337,35 @@ export default async function ExpensesPage({
       ...maintenanceExpenseIds,
     ]);
 
+  const settlementByExpenseId =
+    new Map<string, string>(
+      (settlementLinksData ?? [])
+        .filter(
+          (
+            record: {
+              expense_id:
+                | string
+                | null;
+              settlement_id: string;
+            },
+          ): record is {
+            expense_id: string;
+            settlement_id: string;
+          } =>
+            Boolean(record.expense_id),
+        )
+        .map((record) => [
+          record.expense_id,
+          record.settlement_id,
+        ]),
+    );
+
+  const protectedExpenseIds =
+    new Set<string>([
+      ...structuredExpenseIds,
+      ...settlementByExpenseId.keys(),
+    ]);
+
   const loadsById = new Map(
     loads.map((load) => [
       load.id,
@@ -339,7 +377,7 @@ export default async function ExpensesPage({
     ? expenses.find(
         (expense) =>
           expense.id === edit &&
-          !structuredExpenseIds.has(
+          !protectedExpenseIds.has(
             expense.id,
           ),
       )
@@ -465,15 +503,16 @@ export default async function ExpensesPage({
 
         {fuelLinksError ||
         defLinksError ||
-        maintenanceLinksError ? (
+        maintenanceLinksError ||
+        settlementLinksError ? (
           <div
             role="alert"
             className="mt-6 rounded-xl border border-amber-400/20 bg-amber-400/10 px-4 py-3 text-sm font-medium text-amber-200"
           >
-            Structured expense links could not
-            be fully verified. Manage diesel and
-            DEF from Fuel operations and service
-            work from Maintenance.
+            Structured or settlement expense
+            links could not be fully verified.
+            Linked records must be managed from
+            their operations or settlement pages.
           </div>
         ) : null}
 
@@ -670,6 +709,17 @@ export default async function ExpensesPage({
                                 className="rounded-lg border border-violet-400/20 bg-violet-400/10 px-3 py-2 text-xs font-bold text-violet-300 transition hover:border-violet-400/50 hover:bg-violet-400/20"
                               >
                                 Manage in Maintenance
+                              </Link>
+                            ) : settlementByExpenseId.has(
+                                expense.id,
+                              ) ? (
+                              <Link
+                                href={`/settlements?manage=${settlementByExpenseId.get(
+                                  expense.id,
+                                )}#settlement-workspace`}
+                                className="rounded-lg border border-sky-400/20 bg-sky-400/10 px-3 py-2 text-xs font-bold text-sky-300 transition hover:border-sky-400/50 hover:bg-sky-400/20"
+                              >
+                                Linked to settlement
                               </Link>
                             ) : (
                               <div className="flex items-center gap-2">

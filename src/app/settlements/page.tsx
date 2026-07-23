@@ -7,11 +7,14 @@ import { createClient } from "@/lib/supabase/server";
 import { AdjustmentForm } from "./adjustment-form";
 import { DeleteLineItemForm } from "./delete-line-item-form";
 import { DeleteSettlementForm } from "./delete-settlement-form";
+import { ExpenseReconciliationForm } from "./expense-reconciliation-form";
 import { LifecycleActions } from "./lifecycle-actions";
 import { LineItemForm } from "./line-item-form";
 import { SettlementForm } from "./settlement-form";
+import { UnlinkExpenseForm } from "./unlink-expense-form";
 import type {
   ApprovalSnapshotRecord,
+  ExpenseOption,
   LoadOption,
   SettlementAdjustmentRecord,
   SettlementAuditRecord,
@@ -287,6 +290,10 @@ export default async function SettlementsPage({
       data: loadsData,
       error: loadsError,
     },
+    {
+      data: expensesData,
+      error: expensesError,
+    },
   ] = await Promise.all([
     supabase
       .from("settlements")
@@ -326,6 +333,10 @@ export default async function SettlementsPage({
           id,
           settlement_id,
           load_id,
+          expense_id,
+          source_type,
+          source_amount,
+          variance_reason,
           kind,
           category,
           description,
@@ -404,6 +415,26 @@ export default async function SettlementsPage({
       .order("created_at", {
         ascending: false,
       }),
+    supabase
+      .from("expenses")
+      .select(
+        `
+          id,
+          load_id,
+          category,
+          amount,
+          expense_date,
+          vendor,
+          notes
+        `,
+      )
+      .eq("user_id", userId)
+      .order("expense_date", {
+        ascending: false,
+      })
+      .order("created_at", {
+        ascending: false,
+      }),
   ]);
 
   const settlements =
@@ -428,6 +459,11 @@ export default async function SettlementsPage({
 
   const loads =
     (loadsData ?? []) as LoadOption[];
+
+  const expenseRecords =
+    (expensesData ?? []) as Array<
+      Omit<ExpenseOption, "load_label">
+    >;
 
   const loadsById = new Map(
     loads.map((load) => [load.id, load]),
@@ -503,7 +539,8 @@ export default async function SettlementsPage({
       adjustmentsError ||
       auditError ||
       snapshotsError ||
-      loadsError,
+      loadsError ||
+      expensesError,
   );
 
   const selectedLineItems =
@@ -521,6 +558,90 @@ export default async function SettlementsPage({
           Boolean(loadId),
       ),
   ).size;
+
+  const linkedExpenseIds = new Set(
+    lineItems
+      .map((lineItem) => lineItem.expense_id)
+      .filter(
+        (
+          expenseId,
+        ): expenseId is string =>
+          Boolean(expenseId),
+      ),
+  );
+
+  const selectedLinkedExpenseLines =
+    selectedLineItems.filter(
+      (lineItem) =>
+        Boolean(lineItem.expense_id),
+    );
+
+  const linkedExpenseSourceTotal =
+    selectedLinkedExpenseLines.reduce(
+      (total, lineItem) =>
+        total +
+        Number(
+          lineItem.source_amount ?? 0,
+        ),
+      0,
+    );
+
+  const linkedExpenseStatementTotal =
+    selectedLinkedExpenseLines.reduce(
+      (total, lineItem) =>
+        total + Number(lineItem.amount),
+      0,
+    );
+
+  const availableExpenses: ExpenseOption[] =
+    expenseRecords
+      .filter(
+        (expense) =>
+          !linkedExpenseIds.has(expense.id),
+      )
+      .sort((first, second) => {
+        if (!selectedSettlement) {
+          return second.expense_date.localeCompare(
+            first.expense_date,
+          );
+        }
+
+        const firstInPeriod =
+          (!selectedSettlement.period_start_date ||
+            first.expense_date >=
+              selectedSettlement.period_start_date) &&
+          (!selectedSettlement.period_end_date ||
+            first.expense_date <=
+              selectedSettlement.period_end_date);
+
+        const secondInPeriod =
+          (!selectedSettlement.period_start_date ||
+            second.expense_date >=
+              selectedSettlement.period_start_date) &&
+          (!selectedSettlement.period_end_date ||
+            second.expense_date <=
+              selectedSettlement.period_end_date);
+
+        if (firstInPeriod !== secondInPeriod) {
+          return firstInPeriod ? -1 : 1;
+        }
+
+        return second.expense_date.localeCompare(
+          first.expense_date,
+        );
+      })
+      .map((expense) => {
+        const linkedLoad = expense.load_id
+          ? loadsById.get(expense.load_id)
+          : undefined;
+
+        return {
+          ...expense,
+          load_label: linkedLoad
+            ? `Load ${linkedLoad.load_number} · ${linkedLoad.origin_city}, ${linkedLoad.origin_state} → ${linkedLoad.destination_city}, ${linkedLoad.destination_state}`
+            : null,
+        };
+      });
 
   const selectedAdjustments =
     selectedSettlement
@@ -592,8 +713,9 @@ export default async function SettlementsPage({
 
           <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-400">
             Build each statement from earnings,
-            deductions, reimbursements, and
-            linked loads. Review and approve it,
+            deductions, reimbursements, linked
+            loads, and recorded operating expenses.
+            Review and approve it,
             preserve an immutable snapshot, then
             record later corrections through
             auditable adjustments.
@@ -886,6 +1008,12 @@ export default async function SettlementsPage({
                                   >
                                     {details.label}
                                   </span>
+
+                                  {lineItem.expense_id ? (
+                                    <span className="rounded-full border border-sky-400/20 bg-sky-400/10 px-2.5 py-1 text-xs font-bold text-sky-300">
+                                      Linked expense
+                                    </span>
+                                  ) : null}
                                 </div>
 
                                 <p className="mt-2 text-sm capitalize text-slate-400">
@@ -894,6 +1022,36 @@ export default async function SettlementsPage({
                                     " ",
                                   )}
                                 </p>
+
+                                {lineItem.expense_id &&
+                                lineItem.source_amount !== null ? (
+                                  <div className="mt-3 rounded-lg border border-sky-400/15 bg-sky-400/5 px-3 py-2 text-xs leading-5 text-sky-100/80">
+                                    Expense ledger amount:{" "}
+                                    <strong>
+                                      {formatCurrency(
+                                        lineItem.source_amount,
+                                      )}
+                                    </strong>
+                                    {" · "}
+                                    Statement variance:{" "}
+                                    <strong>
+                                      {formatCurrency(
+                                        Number(
+                                          lineItem.amount,
+                                        ) -
+                                          Number(
+                                            lineItem.source_amount,
+                                          ),
+                                      )}
+                                    </strong>
+                                    {lineItem.variance_reason ? (
+                                      <>
+                                        {" · "}
+                                        {lineItem.variance_reason}
+                                      </>
+                                    ) : null}
+                                  </div>
+                                ) : null}
 
                                 {linkedLoad ? (
                                   <p className="mt-2 text-xs text-slate-500">
@@ -954,17 +1112,31 @@ export default async function SettlementsPage({
                                 {isEditable(
                                   selectedSettlement.status,
                                 ) ? (
-                                  <DeleteLineItemForm
-                                    settlementId={
-                                      selectedSettlement.id
-                                    }
-                                    lineItemId={
-                                      lineItem.id
-                                    }
-                                    description={
-                                      lineItem.description
-                                    }
-                                  />
+                                  lineItem.expense_id ? (
+                                    <UnlinkExpenseForm
+                                      settlementId={
+                                        selectedSettlement.id
+                                      }
+                                      lineItemId={
+                                        lineItem.id
+                                      }
+                                      description={
+                                        lineItem.description
+                                      }
+                                    />
+                                  ) : (
+                                    <DeleteLineItemForm
+                                      settlementId={
+                                        selectedSettlement.id
+                                      }
+                                      lineItemId={
+                                        lineItem.id
+                                      }
+                                      description={
+                                        lineItem.description
+                                      }
+                                    />
+                                  )
                                 ) : null}
                               </div>
                             </div>
@@ -994,6 +1166,79 @@ export default async function SettlementsPage({
               </article>
 
               <div className="space-y-6">
+                <article className="rounded-2xl border border-slate-800 bg-slate-900/80 p-5 sm:p-6">
+                  <p className="text-sm font-semibold text-sky-400">
+                    Reuse recorded costs
+                  </p>
+
+                  <h3 className="mt-1 text-xl font-black text-white">
+                    Operating expense reconciliation
+                  </h3>
+
+                  <p className="mt-2 text-sm leading-6 text-slate-400">
+                    Link expenses already recorded in
+                    Axleledger instead of retyping
+                    them as settlement deductions.
+                  </p>
+
+                  <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                    <div className="rounded-xl bg-slate-950/60 p-4">
+                      <p className="text-xs text-slate-500">
+                        Linked ledger costs
+                      </p>
+
+                      <p className="mt-1 font-black text-white">
+                        {formatCurrency(
+                          linkedExpenseSourceTotal,
+                        )}
+                      </p>
+                    </div>
+
+                    <div className="rounded-xl bg-slate-950/60 p-4">
+                      <p className="text-xs text-slate-500">
+                        Statement deductions
+                      </p>
+
+                      <p className="mt-1 font-black text-amber-400">
+                        {formatCurrency(
+                          linkedExpenseStatementTotal,
+                        )}
+                      </p>
+                    </div>
+                  </div>
+
+                  <p className="mt-3 text-xs leading-5 text-slate-500">
+                    {formatNumber(
+                      selectedLinkedExpenseLines.length,
+                    )}{" "}
+                    linked{" "}
+                    {selectedLinkedExpenseLines.length ===
+                    1
+                      ? "expense"
+                      : "expenses"}
+                    . The original expense records
+                    remain unchanged.
+                  </p>
+
+                  {isEditable(
+                    selectedSettlement.status,
+                  ) ? (
+                    <ExpenseReconciliationForm
+                      settlementId={
+                        selectedSettlement.id
+                      }
+                      expenses={
+                        availableExpenses
+                      }
+                    />
+                  ) : (
+                    <p className="mt-5 rounded-xl border border-slate-800 bg-slate-950/50 px-4 py-3 text-xs leading-5 text-slate-500">
+                      Reopen the settlement to link
+                      or unlink operating expenses.
+                    </p>
+                  )}
+                </article>
+
                 <article className="rounded-2xl border border-slate-800 bg-slate-900/80 p-5 sm:p-6">
                   <p className="text-sm font-semibold text-amber-400">
                     Post-approval corrections

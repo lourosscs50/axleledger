@@ -676,6 +676,151 @@ export async function addSettlementLineItem(
   );
 }
 
+export async function linkSettlementExpenses(
+  formData: FormData,
+) {
+  const settlementId = requireText(
+    formData,
+    "settlement_id",
+    "Settlement ID",
+  );
+
+  const expenseIds = Array.from(
+    new Set(
+      formData
+        .getAll("expense_id")
+        .filter(
+          (value): value is string =>
+            typeof value === "string" &&
+            Boolean(value.trim()),
+        )
+        .map((value) => value.trim()),
+    ),
+  );
+
+  if (expenseIds.length === 0) {
+    redirectWithError(
+      "Select at least one operating expense.",
+      settlementId,
+    );
+  }
+
+  const links = expenseIds.map(
+    (expenseId) => ({
+      expense_id: expenseId,
+      statement_amount:
+        readPositiveNumber(
+          formData,
+          `statement_amount_${expenseId}`,
+          "Statement deduction",
+          settlementId,
+        ),
+      variance_reason:
+        readText(
+          formData,
+          `variance_reason_${expenseId}`,
+        ) || null,
+    }),
+  );
+
+  const { supabase } =
+    await getAuthenticatedClient();
+
+  const { error } = await supabase.rpc(
+    "link_settlement_expenses",
+    {
+      p_settlement_id: settlementId,
+      p_links: links,
+    },
+  );
+
+  if (error) {
+    console.error(
+      "Unable to link settlement expenses:",
+      error,
+    );
+
+    redirectWithError(
+      error.message.includes(
+        "already linked",
+      )
+        ? error.message
+        : error.message.includes(
+              "variance reason",
+            )
+          ? error.message
+          : error.message.includes(
+                "draft or reopened",
+              )
+            ? error.message
+            : "Axleledger could not link those operating expenses.",
+      settlementId,
+    );
+  }
+
+  revalidatePath("/expenses");
+  revalidateSettlementPages();
+
+  redirectWithSuccess(
+    expenseIds.length === 1
+      ? "Operating expense linked to the settlement."
+      : `${expenseIds.length} operating expenses linked to the settlement.`,
+    settlementId,
+  );
+}
+
+export async function unlinkSettlementExpense(
+  formData: FormData,
+) {
+  const settlementId = requireText(
+    formData,
+    "settlement_id",
+    "Settlement ID",
+  );
+
+  const lineItemId = requireText(
+    formData,
+    "line_item_id",
+    "Line-item ID",
+    settlementId,
+  );
+
+  const { supabase } =
+    await getAuthenticatedClient();
+
+  const { error } = await supabase.rpc(
+    "unlink_settlement_expense",
+    {
+      p_settlement_id: settlementId,
+      p_line_item_id: lineItemId,
+    },
+  );
+
+  if (error) {
+    console.error(
+      "Unable to unlink settlement expense:",
+      error,
+    );
+
+    redirectWithError(
+      error.message.includes(
+        "draft or reopened",
+      )
+        ? error.message
+        : "Axleledger could not unlink that operating expense.",
+      settlementId,
+    );
+  }
+
+  revalidatePath("/expenses");
+  revalidateSettlementPages();
+
+  redirectWithSuccess(
+    "Operating expense unlinked. The original expense remains recorded.",
+    settlementId,
+  );
+}
+
 export async function deleteSettlementLineItem(
   formData: FormData,
 ) {
