@@ -8,13 +8,16 @@ import { AdjustmentForm } from "./adjustment-form";
 import { DeleteLineItemForm } from "./delete-line-item-form";
 import { DeleteSettlementForm } from "./delete-settlement-form";
 import { ExpenseReconciliationForm } from "./expense-reconciliation-form";
+import { FixedCostReconciliationForm } from "./fixed-cost-reconciliation-form";
 import { LifecycleActions } from "./lifecycle-actions";
 import { LineItemForm } from "./line-item-form";
 import { SettlementForm } from "./settlement-form";
 import { UnlinkExpenseForm } from "./unlink-expense-form";
+import { UnlinkFixedCostForm } from "./unlink-fixed-cost-form";
 import type {
   ApprovalSnapshotRecord,
   ExpenseOption,
+  FixedCostOption,
   LoadOption,
   SettlementAdjustmentRecord,
   SettlementAuditRecord,
@@ -214,6 +217,66 @@ function isEditable(
   );
 }
 
+function calculateFixedCostExpectedAmount(
+  fixedCost: Omit<
+    FixedCostOption,
+    "expected_amount"
+  >,
+  settlement: SettlementRecord,
+) {
+  if (
+    settlement.period_start_date &&
+    settlement.period_end_date
+  ) {
+    if (
+      fixedCost.effective_date >
+      settlement.period_end_date
+    ) {
+      return null;
+    }
+
+    const effectiveStart =
+      fixedCost.effective_date >
+      settlement.period_start_date
+        ? fixedCost.effective_date
+        : settlement.period_start_date;
+
+    const start = new Date(
+      `${effectiveStart}T00:00:00Z`,
+    );
+
+    const end = new Date(
+      `${settlement.period_end_date}T00:00:00Z`,
+    );
+
+    const days =
+      Math.floor(
+        (end.getTime() - start.getTime()) /
+          (1000 * 60 * 60 * 24),
+      ) + 1;
+
+    const divisor =
+      fixedCost.frequency === "weekly"
+        ? 7
+        : 30.4375;
+
+    return Math.round(
+      (Number(fixedCost.amount) *
+        (days / divisor)) *
+        100,
+    ) / 100;
+  }
+
+  if (
+    fixedCost.effective_date >
+    settlement.settlement_date
+  ) {
+    return null;
+  }
+
+  return Number(fixedCost.amount);
+}
+
 function auditDetail(
   audit: SettlementAuditRecord,
 ) {
@@ -294,6 +357,10 @@ export default async function SettlementsPage({
       data: expensesData,
       error: expensesError,
     },
+    {
+      data: fixedCostsData,
+      error: fixedCostsError,
+    },
   ] = await Promise.all([
     supabase
       .from("settlements")
@@ -334,6 +401,7 @@ export default async function SettlementsPage({
           settlement_id,
           load_id,
           expense_id,
+          fixed_cost_id,
           source_type,
           source_amount,
           variance_reason,
@@ -435,6 +503,30 @@ export default async function SettlementsPage({
       .order("created_at", {
         ascending: false,
       }),
+    supabase
+      .from("fixed_costs")
+      .select(
+        `
+          id,
+          name,
+          category,
+          amount,
+          frequency,
+          effective_date,
+          is_active,
+          notes
+        `,
+      )
+      .eq("user_id", userId)
+      .order("is_active", {
+        ascending: false,
+      })
+      .order("effective_date", {
+        ascending: false,
+      })
+      .order("created_at", {
+        ascending: false,
+      }),
   ]);
 
   const settlements =
@@ -463,6 +555,14 @@ export default async function SettlementsPage({
   const expenseRecords =
     (expensesData ?? []) as Array<
       Omit<ExpenseOption, "load_label">
+    >;
+
+  const fixedCostRecords =
+    (fixedCostsData ?? []) as Array<
+      Omit<
+        FixedCostOption,
+        "expected_amount"
+      >
     >;
 
   const loadsById = new Map(
@@ -540,7 +640,8 @@ export default async function SettlementsPage({
       auditError ||
       snapshotsError ||
       loadsError ||
-      expensesError,
+      expensesError ||
+      fixedCostsError,
   );
 
   const selectedLineItems =
@@ -592,6 +693,84 @@ export default async function SettlementsPage({
         total + Number(lineItem.amount),
       0,
     );
+
+  const selectedLinkedFixedCostLines =
+    selectedLineItems.filter(
+      (lineItem) =>
+        Boolean(lineItem.fixed_cost_id),
+    );
+
+  const linkedFixedCostSourceTotal =
+    selectedLinkedFixedCostLines.reduce(
+      (total, lineItem) =>
+        total +
+        Number(
+          lineItem.source_amount ?? 0,
+        ),
+      0,
+    );
+
+  const linkedFixedCostStatementTotal =
+    selectedLinkedFixedCostLines.reduce(
+      (total, lineItem) =>
+        total + Number(lineItem.amount),
+      0,
+    );
+
+  const selectedLinkedFixedCostIds =
+    new Set(
+      selectedLinkedFixedCostLines
+        .map(
+          (lineItem) =>
+            lineItem.fixed_cost_id,
+        )
+        .filter(
+          (
+            fixedCostId,
+          ): fixedCostId is string =>
+            Boolean(fixedCostId),
+        ),
+    );
+
+  const availableFixedCosts: FixedCostOption[] =
+    selectedSettlement
+      ? fixedCostRecords
+          .map((fixedCost) => ({
+            fixedCost,
+            expectedAmount:
+              calculateFixedCostExpectedAmount(
+                fixedCost,
+                selectedSettlement,
+              ),
+          }))
+          .filter(
+            (record) =>
+              record.expectedAmount !== null &&
+              record.expectedAmount > 0 &&
+              !selectedLinkedFixedCostIds.has(
+                record.fixedCost.id,
+              ),
+          )
+          .sort((first, second) => {
+            if (
+              first.fixedCost.is_active !==
+              second.fixedCost.is_active
+            ) {
+              return first.fixedCost.is_active
+                ? -1
+                : 1;
+            }
+
+            return first.fixedCost.name.localeCompare(
+              second.fixedCost.name,
+            );
+          })
+          .map((record) => ({
+            ...record.fixedCost,
+            expected_amount:
+              record.expectedAmount as number,
+          }))
+      : [];
 
   const availableExpenses: ExpenseOption[] =
     expenseRecords
@@ -714,7 +893,8 @@ export default async function SettlementsPage({
           <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-400">
             Build each statement from earnings,
             deductions, reimbursements, linked
-            loads, and recorded operating expenses.
+            loads, operating expenses, and recurring
+            fixed costs.
             Review and approve it,
             preserve an immutable snapshot, then
             record later corrections through
@@ -1009,9 +1189,15 @@ export default async function SettlementsPage({
                                     {details.label}
                                   </span>
 
-                                  {lineItem.expense_id ? (
+                                  {lineItem.source_type ===
+                                  "expense" ? (
                                     <span className="rounded-full border border-sky-400/20 bg-sky-400/10 px-2.5 py-1 text-xs font-bold text-sky-300">
                                       Linked expense
+                                    </span>
+                                  ) : lineItem.source_type ===
+                                    "fixed_cost" ? (
+                                    <span className="rounded-full border border-violet-400/20 bg-violet-400/10 px-2.5 py-1 text-xs font-bold text-violet-300">
+                                      Linked fixed cost
                                     </span>
                                   ) : null}
                                 </div>
@@ -1023,10 +1209,20 @@ export default async function SettlementsPage({
                                   )}
                                 </p>
 
-                                {lineItem.expense_id &&
+                                {lineItem.source_type &&
                                 lineItem.source_amount !== null ? (
-                                  <div className="mt-3 rounded-lg border border-sky-400/15 bg-sky-400/5 px-3 py-2 text-xs leading-5 text-sky-100/80">
-                                    Expense ledger amount:{" "}
+                                  <div
+                                    className={
+                                      lineItem.source_type ===
+                                      "fixed_cost"
+                                        ? "mt-3 rounded-lg border border-violet-400/15 bg-violet-400/5 px-3 py-2 text-xs leading-5 text-violet-100/80"
+                                        : "mt-3 rounded-lg border border-sky-400/15 bg-sky-400/5 px-3 py-2 text-xs leading-5 text-sky-100/80"
+                                    }
+                                  >
+                                    {lineItem.source_type ===
+                                    "fixed_cost"
+                                      ? "Expected recurring amount: "
+                                      : "Expense ledger amount: "}
                                     <strong>
                                       {formatCurrency(
                                         lineItem.source_amount,
@@ -1112,8 +1308,22 @@ export default async function SettlementsPage({
                                 {isEditable(
                                   selectedSettlement.status,
                                 ) ? (
-                                  lineItem.expense_id ? (
+                                  lineItem.source_type ===
+                                  "expense" ? (
                                     <UnlinkExpenseForm
+                                      settlementId={
+                                        selectedSettlement.id
+                                      }
+                                      lineItemId={
+                                        lineItem.id
+                                      }
+                                      description={
+                                        lineItem.description
+                                      }
+                                    />
+                                  ) : lineItem.source_type ===
+                                    "fixed_cost" ? (
+                                    <UnlinkFixedCostForm
                                       settlementId={
                                         selectedSettlement.id
                                       }
@@ -1235,6 +1445,80 @@ export default async function SettlementsPage({
                     <p className="mt-5 rounded-xl border border-slate-800 bg-slate-950/50 px-4 py-3 text-xs leading-5 text-slate-500">
                       Reopen the settlement to link
                       or unlink operating expenses.
+                    </p>
+                  )}
+                </article>
+
+                <article className="rounded-2xl border border-slate-800 bg-slate-900/80 p-5 sm:p-6">
+                  <p className="text-sm font-semibold text-violet-400">
+                    Reuse recurring obligations
+                  </p>
+
+                  <h3 className="mt-1 text-xl font-black text-white">
+                    Fixed-cost reconciliation
+                  </h3>
+
+                  <p className="mt-2 text-sm leading-6 text-slate-400">
+                    Link truck payments, trailer
+                    leases, insurance, and other
+                    scheduled costs instead of
+                    retyping each deduction.
+                  </p>
+
+                  <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                    <div className="rounded-xl bg-slate-950/60 p-4">
+                      <p className="text-xs text-slate-500">
+                        Expected recurring costs
+                      </p>
+
+                      <p className="mt-1 font-black text-white">
+                        {formatCurrency(
+                          linkedFixedCostSourceTotal,
+                        )}
+                      </p>
+                    </div>
+
+                    <div className="rounded-xl bg-slate-950/60 p-4">
+                      <p className="text-xs text-slate-500">
+                        Statement deductions
+                      </p>
+
+                      <p className="mt-1 font-black text-amber-400">
+                        {formatCurrency(
+                          linkedFixedCostStatementTotal,
+                        )}
+                      </p>
+                    </div>
+                  </div>
+
+                  <p className="mt-3 text-xs leading-5 text-slate-500">
+                    {formatNumber(
+                      selectedLinkedFixedCostLines.length,
+                    )}{" "}
+                    linked fixed-cost{
+                      selectedLinkedFixedCostLines.length ===
+                      1
+                        ? ""
+                        : "s"
+                    }. The recurring schedules remain
+                    available for future settlements.
+                  </p>
+
+                  {isEditable(
+                    selectedSettlement.status,
+                  ) ? (
+                    <FixedCostReconciliationForm
+                      settlementId={
+                        selectedSettlement.id
+                      }
+                      fixedCosts={
+                        availableFixedCosts
+                      }
+                    />
+                  ) : (
+                    <p className="mt-5 rounded-xl border border-slate-800 bg-slate-950/50 px-4 py-3 text-xs leading-5 text-slate-500">
+                      Reopen the settlement to link
+                      or unlink recurring fixed costs.
                     </p>
                   )}
                 </article>

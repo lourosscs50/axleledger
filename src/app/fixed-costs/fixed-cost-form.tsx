@@ -13,6 +13,7 @@ import {
 
 type FixedCostCategory =
   | "truck_payment"
+  | "trailer_lease"
   | "insurance"
   | "permits"
   | "communications"
@@ -48,6 +49,10 @@ const categories: Array<{
   {
     value: "truck_payment",
     label: "Truck payment",
+  },
+  {
+    value: "trailer_lease",
+    label: "Trailer lease",
   },
   {
     value: "insurance",
