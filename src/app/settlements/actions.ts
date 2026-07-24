@@ -821,6 +821,155 @@ export async function unlinkSettlementExpense(
   );
 }
 
+export async function linkSettlementFixedCosts(
+  formData: FormData,
+) {
+  const settlementId = requireText(
+    formData,
+    "settlement_id",
+    "Settlement ID",
+  );
+
+  const fixedCostIds = Array.from(
+    new Set(
+      formData
+        .getAll("fixed_cost_id")
+        .filter(
+          (value): value is string =>
+            typeof value === "string" &&
+            Boolean(value.trim()),
+        )
+        .map((value) => value.trim()),
+    ),
+  );
+
+  if (fixedCostIds.length === 0) {
+    redirectWithError(
+      "Select at least one recurring fixed cost.",
+      settlementId,
+    );
+  }
+
+  const links = fixedCostIds.map(
+    (fixedCostId) => ({
+      fixed_cost_id: fixedCostId,
+      statement_amount:
+        readPositiveNumber(
+          formData,
+          `statement_amount_${fixedCostId}`,
+          "Statement deduction",
+          settlementId,
+        ),
+      variance_reason:
+        readText(
+          formData,
+          `variance_reason_${fixedCostId}`,
+        ) || null,
+    }),
+  );
+
+  const { supabase } =
+    await getAuthenticatedClient();
+
+  const { error } = await supabase.rpc(
+    "link_settlement_fixed_costs",
+    {
+      p_settlement_id: settlementId,
+      p_links: links,
+    },
+  );
+
+  if (error) {
+    console.error(
+      "Unable to link settlement fixed costs:",
+      error,
+    );
+
+    redirectWithError(
+      error.message.includes(
+        "already linked",
+      )
+        ? error.message
+        : error.message.includes(
+              "variance reason",
+            )
+          ? error.message
+          : error.message.includes(
+                "draft or reopened",
+              )
+            ? error.message
+            : error.message.includes(
+                  "not effective",
+                )
+              ? error.message
+              : "Axleledger could not link those recurring fixed costs.",
+      settlementId,
+    );
+  }
+
+  revalidatePath("/fixed-costs");
+  revalidateSettlementPages();
+
+  redirectWithSuccess(
+    fixedCostIds.length === 1
+      ? "Recurring fixed cost linked to the settlement."
+      : `${fixedCostIds.length} recurring fixed costs linked to the settlement.`,
+    settlementId,
+  );
+}
+
+export async function unlinkSettlementFixedCost(
+  formData: FormData,
+) {
+  const settlementId = requireText(
+    formData,
+    "settlement_id",
+    "Settlement ID",
+  );
+
+  const lineItemId = requireText(
+    formData,
+    "line_item_id",
+    "Line-item ID",
+    settlementId,
+  );
+
+  const { supabase } =
+    await getAuthenticatedClient();
+
+  const { error } = await supabase.rpc(
+    "unlink_settlement_fixed_cost",
+    {
+      p_settlement_id: settlementId,
+      p_line_item_id: lineItemId,
+    },
+  );
+
+  if (error) {
+    console.error(
+      "Unable to unlink settlement fixed cost:",
+      error,
+    );
+
+    redirectWithError(
+      error.message.includes(
+        "draft or reopened",
+      )
+        ? error.message
+        : "Axleledger could not unlink that recurring fixed cost.",
+      settlementId,
+    );
+  }
+
+  revalidatePath("/fixed-costs");
+  revalidateSettlementPages();
+
+  redirectWithSuccess(
+    "Recurring fixed cost unlinked. The fixed-cost schedule remains recorded.",
+    settlementId,
+  );
+}
+
 export async function deleteSettlementLineItem(
   formData: FormData,
 ) {

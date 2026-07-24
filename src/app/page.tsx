@@ -58,6 +58,8 @@ type ExpenseRecord = {
 type SettlementRecord = {
   id: string;
   settlement_date: string;
+  period_start_date: string | null;
+  period_end_date: string | null;
   carrier_or_company: string | null;
   gross_pay: number;
   deductions: number;
@@ -74,6 +76,11 @@ type SettlementRecord = {
 type SettlementLineItemRecord = {
   settlement_id: string;
   expense_id: string | null;
+  fixed_cost_id: string | null;
+  source_type:
+    | "expense"
+    | "fixed_cost"
+    | null;
   kind:
     | "earning"
     | "deduction"
@@ -916,6 +923,8 @@ export default async function Home({
         `
           id,
           settlement_date,
+          period_start_date,
+          period_end_date,
           carrier_or_company,
           gross_pay,
           deductions,
@@ -931,6 +940,8 @@ export default async function Home({
         `
           settlement_id,
           expense_id,
+          fixed_cost_id,
+          source_type,
           kind,
           amount,
           source_amount
@@ -1240,6 +1251,22 @@ export default async function Home({
           periodEnd,
     );
 
+  const settlementsById = new Map(
+    periodSettlements.map(
+      (settlement) => [
+        settlement.id,
+        settlement,
+      ],
+    ),
+  );
+
+  const fixedCostsById = new Map(
+    fixedCosts.map((fixedCost) => [
+      fixedCost.id,
+      fixedCost,
+    ]),
+  );
+
   const grossRevenue = sumValues(
     completedLoads,
     (load) =>
@@ -1305,11 +1332,86 @@ export default async function Home({
     linkedExpenseStatementTotal -
     linkedExpenseSourceTotal;
 
+  const linkedFixedCostSourceTotal =
+    sumValues(
+      periodDeductionLines.filter(
+        (lineItem) =>
+          lineItem.source_type ===
+          "fixed_cost",
+      ),
+      (lineItem) =>
+        Number(
+          lineItem.source_amount ?? 0,
+        ),
+    );
+
+  const linkedFixedCostCurrentScheduleTotal =
+    sumValues(
+      periodDeductionLines.filter(
+        (lineItem) =>
+          lineItem.source_type ===
+          "fixed_cost",
+      ),
+      (lineItem) => {
+        if (!lineItem.fixed_cost_id) {
+          return 0;
+        }
+
+        const fixedCost =
+          fixedCostsById.get(
+            lineItem.fixed_cost_id,
+          );
+
+        const settlement =
+          settlementsById.get(
+            lineItem.settlement_id,
+          );
+
+        if (!fixedCost || !settlement) {
+          return 0;
+        }
+
+        if (
+          settlement.period_start_date &&
+          settlement.period_end_date
+        ) {
+          return recurringCostForPeriod(
+            fixedCost,
+            settlement.period_start_date,
+            settlement.period_end_date,
+          );
+        }
+
+        return fixedCost.is_active &&
+          fixedCost.effective_date <=
+            settlement.settlement_date
+          ? Number(fixedCost.amount)
+          : 0;
+      },
+    );
+
+  const linkedFixedCostStatementTotal =
+    sumValues(
+      periodDeductionLines.filter(
+        (lineItem) =>
+          lineItem.source_type ===
+          "fixed_cost",
+      ),
+      (lineItem) =>
+        Number(lineItem.amount),
+    );
+
+  const linkedFixedCostVariance =
+    linkedFixedCostStatementTotal -
+    linkedFixedCostSourceTotal;
+
   const manualSettlementDeductions =
     sumValues(
       periodDeductionLines.filter(
         (lineItem) =>
-          !lineItem.expense_id,
+          lineItem.source_type === null &&
+          !lineItem.expense_id &&
+          !lineItem.fixed_cost_id,
       ),
       (lineItem) =>
         Number(lineItem.amount),
@@ -1317,9 +1419,10 @@ export default async function Home({
 
   const settlementDeductions =
     manualSettlementDeductions +
-    linkedExpenseVariance;
+    linkedExpenseVariance +
+    linkedFixedCostVariance;
 
-  const recurringCosts = sumValues(
+  const recurringCostBaseline = sumValues(
     activeFixedCosts,
     (fixedCost) =>
       recurringCostForPeriod(
@@ -1328,6 +1431,11 @@ export default async function Home({
         periodEnd,
       ),
   );
+
+  const recurringCosts =
+    recurringCostBaseline +
+    linkedFixedCostSourceTotal -
+    linkedFixedCostCurrentScheduleTotal;
 
   const totalExpenses =
     directExpenses +
@@ -1465,7 +1573,7 @@ export default async function Home({
                   totalIncome) *
                   100,
               )}% of income`
-            : "Ledger expenses, reconciliation variances, and recurring costs",
+            : "Ledger expenses, source variances, and recurring costs",
         statusLabel:
           expenseStatus,
         tone: expenseTone,
@@ -2163,8 +2271,10 @@ export default async function Home({
           contribute deductions and reimbursements.
           Operating expenses linked to settlements
           remain counted once through the expense
-          ledger; only manual settlement deductions
-          and statement-to-ledger variances add
+          ledger. Fixed costs linked to settlements
+          remain counted once through their recurring
+          schedules. Only manual deductions and
+          statement-to-source variances add
           settlement-only costs.
           Only paid settlements appear as cash
           deposits, preventing draft values from

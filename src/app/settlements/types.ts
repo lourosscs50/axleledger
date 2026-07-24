@@ -36,7 +36,11 @@ export type SettlementLineItemRecord = {
   settlement_id: string;
   load_id: string | null;
   expense_id: string | null;
-  source_type: "expense" | null;
+  fixed_cost_id: string | null;
+  source_type:
+    | "expense"
+    | "fixed_cost"
+    | null;
   source_amount: number | null;
   variance_reason: string | null;
   kind: SettlementLineItemKind;
@@ -91,4 +95,16 @@ export type ExpenseOption = {
   vendor: string | null;
   notes: string | null;
   load_label: string | null;
+};
+
+export type FixedCostOption = {
+  id: string;
+  name: string;
+  category: string;
+  amount: number;
+  frequency: "weekly" | "monthly";
+  effective_date: string;
+  is_active: boolean;
+  notes: string | null;
+  expected_amount: number;
 };

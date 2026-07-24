@@ -15,6 +15,7 @@ export const metadata: Metadata = {
 
 type FixedCostCategory =
   | "truck_payment"
+  | "trailer_lease"
   | "insurance"
   | "permits"
   | "communications"
@@ -35,6 +36,11 @@ type FixedCostRecord = {
   is_active: boolean;
   notes: string | null;
   created_at: string;
+};
+
+type FixedCostLinkRecord = {
+  fixed_cost_id: string | null;
+  settlement_id: string;
 };
 
 type FixedCostsPageProps = {
@@ -68,6 +74,7 @@ const categoryLabels: Record<
   string
 > = {
   truck_payment: "Truck payment",
+  trailer_lease: "Trailer lease",
   insurance: "Insurance",
   permits: "Permits",
   communications: "Communications",
@@ -140,37 +147,69 @@ export default async function FixedCostsPage({
     redirect("/login");
   }
 
-  const {
-    data,
-    error: queryError,
-  } = await supabase
-    .from("fixed_costs")
-    .select(
-      `
-        id,
-        name,
-        category,
-        amount,
-        frequency,
-        effective_date,
-        is_active,
-        notes,
-        created_at
-      `,
-    )
-    .eq("user_id", userId)
-    .order("is_active", {
-      ascending: false,
-    })
-    .order("effective_date", {
-      ascending: false,
-    })
-    .order("created_at", {
-      ascending: false,
-    });
+  const [
+    {
+      data,
+      error: queryError,
+    },
+    {
+      data: linkData,
+      error: linkQueryError,
+    },
+  ] = await Promise.all([
+    supabase
+      .from("fixed_costs")
+      .select(
+        `
+          id,
+          name,
+          category,
+          amount,
+          frequency,
+          effective_date,
+          is_active,
+          notes,
+          created_at
+        `,
+      )
+      .eq("user_id", userId)
+      .order("is_active", {
+        ascending: false,
+      })
+      .order("effective_date", {
+        ascending: false,
+      })
+      .order("created_at", {
+        ascending: false,
+      }),
+    supabase
+      .from("settlement_line_items")
+      .select(
+        "fixed_cost_id, settlement_id",
+      )
+      .eq("user_id", userId)
+      .not("fixed_cost_id", "is", null),
+  ]);
 
   const fixedCosts =
     (data ?? []) as FixedCostRecord[];
+
+  const fixedCostLinks =
+    (linkData ?? []) as FixedCostLinkRecord[];
+
+  const linkCounts = new Map<string, number>();
+
+  fixedCostLinks.forEach((link) => {
+    if (!link.fixed_cost_id) {
+      return;
+    }
+
+    linkCounts.set(
+      link.fixed_cost_id,
+      (linkCounts.get(link.fixed_cost_id) ?? 0) +
+        1,
+    );
+  });
 
   const editingFixedCost = edit
     ? fixedCosts.find(
@@ -260,9 +299,9 @@ export default async function FixedCostsPage({
           </h1>
 
           <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-400">
-            Track truck payments, insurance,
-            permits, subscriptions, and other
-            repeating business costs.
+            Track truck payments, trailer leases,
+            insurance, permits, subscriptions, and
+            other repeating business costs.
           </p>
         </section>
 
@@ -291,6 +330,17 @@ export default async function FixedCostsPage({
           >
             Axleledger could not retrieve your
             fixed costs.
+          </div>
+        ) : null}
+
+        {linkQueryError ? (
+          <div
+            role="alert"
+            className="mt-6 rounded-xl border border-amber-400/20 bg-amber-400/10 px-4 py-3 text-sm font-medium text-amber-200"
+          >
+            Settlement usage could not be fully
+            verified. Linked fixed costs remain
+            protected by the database.
           </div>
         ) : null}
 
@@ -383,7 +433,13 @@ export default async function FixedCostsPage({
             ) : (
               <div className="divide-y divide-slate-800">
                 {fixedCosts.map(
-                  (fixedCost) => (
+                  (fixedCost) => {
+                    const linkCount =
+                      linkCounts.get(
+                        fixedCost.id,
+                      ) ?? 0;
+
+                    return (
                     <section
                       key={fixedCost.id}
                       className="p-5 sm:p-6"
@@ -406,6 +462,15 @@ export default async function FixedCostsPage({
                                 ? "Active"
                                 : "Inactive"}
                             </span>
+
+                            {linkCount > 0 ? (
+                              <span className="rounded-full border border-violet-400/20 bg-violet-400/10 px-2.5 py-1 text-xs font-bold text-violet-300">
+                                Used in {linkCount}{" "}
+                                {linkCount === 1
+                                  ? "settlement"
+                                  : "settlements"}
+                              </span>
+                            ) : null}
                           </div>
 
                           <p className="mt-2 text-sm font-semibold text-slate-300">
@@ -445,17 +510,29 @@ export default async function FixedCostsPage({
                               Edit
                             </Link>
 
-                            <DeleteFixedCostForm
-                              fixedCostId={
-                                fixedCost.id
-                              }
-                              description={
-                                fixedCost.name
-                              }
-                            />
+                            {linkCount === 0 ? (
+                              <DeleteFixedCostForm
+                                fixedCostId={
+                                  fixedCost.id
+                                }
+                                description={
+                                  fixedCost.name
+                                }
+                              />
+                            ) : null}
                           </div>
                         </div>
                       </div>
+
+                      {linkCount > 0 ? (
+                        <div className="mt-4 rounded-xl border border-violet-400/15 bg-violet-400/5 px-4 py-3 text-xs leading-5 text-violet-100/80">
+                          This schedule is preserved in
+                          settlement history. Update it
+                          for future calculations or mark
+                          it inactive instead of deleting
+                          it.
+                        </div>
+                      ) : null}
 
                       {fixedCost.notes ? (
                         <div className="mt-4 rounded-xl border border-slate-800 bg-slate-950/70 px-4 py-3">
@@ -469,7 +546,8 @@ export default async function FixedCostsPage({
                         </div>
                       ) : null}
                     </section>
-                  ),
+                    );
+                  },
                 )}
               </div>
             )}

@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 
 const categories = [
   "truck_payment",
+  "trailer_lease",
   "insurance",
   "permits",
   "communications",
@@ -266,6 +267,7 @@ async function getAuthenticatedClient() {
 
 function revalidateFixedCostPages() {
   revalidatePath("/fixed-costs");
+  revalidatePath("/settlements");
   revalidatePath("/");
 }
 
@@ -380,7 +382,9 @@ export async function deleteFixedCost(
     );
 
     redirectWithError(
-      "Axleledger could not delete the fixed cost.",
+      error?.code === "23503"
+        ? "This fixed cost is preserved in settlement history. Mark it inactive instead of deleting it."
+        : "Axleledger could not delete the fixed cost.",
     );
   }
 
