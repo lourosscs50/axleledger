@@ -176,7 +176,10 @@ export function ExpenseReconciliationForm({
         The original expense remains the operating
         ledger record. This creates only a
         settlement reconciliation line, so the
-        cost is not counted twice.
+        cost is not counted twice. Link as many
+        distinct expenses as the settlement needs;
+        Axleledger does not impose a per-settlement
+        expense limit.
       </div>
 
       <button

@@ -1,21 +1,45 @@
 "use client";
 
+import Link from "next/link";
 import {
   useEffect,
   useRef,
 } from "react";
 
-import { createFuelTransaction } from "./actions";
+import {
+  createFuelTransaction,
+  updateFuelTransaction,
+} from "./actions";
 import type {
   LoadOption,
   TruckOption,
 } from "./types";
+
+type EditableFuelTransaction = {
+  id: string;
+  truck_id: string | null;
+  load_id: string | null;
+  transaction_date: string;
+  transaction_time: string | null;
+  odometer: number | null;
+  gallons: number | null;
+  pump_price_per_gallon: number | null;
+  discount_per_gallon: number | null;
+  total_amount: number;
+  network: string | null;
+  location_name: string | null;
+  city: string | null;
+  state: string | null;
+  notes: string | null;
+};
 
 type FuelFormProps = {
   trucks: TruckOption[];
   loads: LoadOption[];
   defaultDate: string;
   resetKey?: string;
+  editingTransaction?: EditableFuelTransaction;
+  editRequested?: boolean;
 };
 
 export function FuelForm({
@@ -23,11 +47,17 @@ export function FuelForm({
   loads,
   defaultDate,
   resetKey,
+  editingTransaction,
+  editRequested = false,
 }: FuelFormProps) {
   const formRef =
     useRef<HTMLFormElement>(null);
 
   useEffect(() => {
+    if (editingTransaction) {
+      return;
+    }
+
     const form = formRef.current;
 
     if (!form) {
@@ -47,7 +77,11 @@ export function FuelForm({
     ) {
       dateField.value = defaultDate;
     }
-  }, [defaultDate, resetKey]);
+  }, [
+    defaultDate,
+    editingTransaction,
+    resetKey,
+  ]);
 
   return (
     <article
@@ -55,12 +89,28 @@ export function FuelForm({
       className="rounded-2xl border border-slate-800 bg-slate-900/80 p-5 sm:p-6"
     >
       <p className="text-sm font-semibold text-amber-400">
-        Diesel entry
+        {editingTransaction
+          ? "Edit diesel"
+          : "Diesel entry"}
       </p>
 
       <h2 className="mt-1 text-2xl font-black text-white">
-        Add diesel
+        {editingTransaction
+          ? "Update diesel transaction"
+          : "Add diesel"}
       </h2>
+
+      {editRequested &&
+      !editingTransaction ? (
+        <div
+          role="alert"
+          className="mt-4 rounded-xl border border-amber-400/20 bg-amber-400/10 px-4 py-3 text-sm leading-6 text-amber-200"
+        >
+          That diesel transaction could not be
+          edited. Legacy imports and missing
+          records remain read-only.
+        </div>
+      ) : null}
 
       {trucks.length === 0 ? (
         <div className="mt-4 rounded-xl border border-amber-400/20 bg-amber-400/10 px-4 py-3 text-sm leading-6 text-amber-200">
@@ -71,10 +121,27 @@ export function FuelForm({
 
       <form
         ref={formRef}
-        action={createFuelTransaction}
+        key={
+          editingTransaction?.id ??
+          resetKey ??
+          "new-diesel"
+        }
+        action={
+          editingTransaction
+            ? updateFuelTransaction
+            : createFuelTransaction
+        }
         autoComplete="off"
         className="mt-6 space-y-5"
       >
+        {editingTransaction ? (
+          <input
+            type="hidden"
+            name="transaction_id"
+            value={editingTransaction.id}
+          />
+        ) : null}
+
         <label className="block">
           <span className="text-sm font-semibold text-slate-300">
             Truck
@@ -85,7 +152,9 @@ export function FuelForm({
             required
             disabled={trucks.length === 0}
             defaultValue={
-              trucks[0]?.id ?? ""
+              editingTransaction?.truck_id ??
+              trucks[0]?.id ??
+              ""
             }
             className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none focus:border-sky-400 disabled:cursor-not-allowed disabled:opacity-50"
           >
@@ -121,7 +190,10 @@ export function FuelForm({
 
           <select
             name="load_id"
-            defaultValue=""
+            defaultValue={
+              editingTransaction?.load_id ??
+              ""
+            }
             className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none focus:border-sky-400"
           >
             <option value="">
@@ -155,7 +227,11 @@ export function FuelForm({
               name="transaction_date"
               type="date"
               required
-              defaultValue={defaultDate}
+              defaultValue={
+                editingTransaction
+                  ?.transaction_date ??
+                defaultDate
+              }
               className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none focus:border-sky-400"
             />
           </label>
@@ -168,6 +244,10 @@ export function FuelForm({
             <input
               name="transaction_time"
               type="time"
+              defaultValue={
+                editingTransaction
+                  ?.transaction_time ?? ""
+              }
               className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none focus:border-sky-400"
             />
           </label>
@@ -184,6 +264,10 @@ export function FuelForm({
             min="0"
             step="1"
             placeholder="Optional"
+            defaultValue={
+              editingTransaction?.odometer ??
+              ""
+            }
             className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none placeholder:text-slate-600 focus:border-sky-400"
           />
         </label>
@@ -201,6 +285,10 @@ export function FuelForm({
               step="0.001"
               required
               placeholder="0.000"
+              defaultValue={
+                editingTransaction?.gallons ??
+                ""
+              }
               className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none placeholder:text-slate-600 focus:border-sky-400"
             />
           </label>
@@ -217,6 +305,11 @@ export function FuelForm({
               step="0.0001"
               required
               placeholder="0.0000"
+              defaultValue={
+                editingTransaction
+                  ?.pump_price_per_gallon ??
+                ""
+              }
               className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none placeholder:text-slate-600 focus:border-sky-400"
             />
           </label>
@@ -232,7 +325,10 @@ export function FuelForm({
               min="0"
               step="0.0001"
               required
-              defaultValue="0"
+              defaultValue={
+                editingTransaction
+                  ?.discount_per_gallon ?? 0
+              }
               className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none focus:border-sky-400"
             />
           </label>
@@ -249,6 +345,10 @@ export function FuelForm({
               step="0.01"
               required
               placeholder="0.00"
+              defaultValue={
+                editingTransaction
+                  ?.total_amount ?? ""
+              }
               className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none placeholder:text-slate-600 focus:border-sky-400"
             />
           </label>
@@ -256,9 +356,10 @@ export function FuelForm({
 
         <p className="rounded-xl border border-slate-800 bg-slate-950/60 px-4 py-3 text-xs leading-5 text-slate-500">
           Net price is calculated from pump
-          price minus discount. Enter the
-          actual receipt total so the linked
-          expense matches the financial charge.
+          price minus discount. Updating the
+          receipt total also updates the existing
+          linked expense instead of creating a
+          second cost.
         </p>
 
         <div className="grid gap-4 sm:grid-cols-2">
@@ -270,6 +371,10 @@ export function FuelForm({
             <input
               name="network"
               placeholder="Pilot/Flying J"
+              defaultValue={
+                editingTransaction?.network ??
+                ""
+              }
               className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none placeholder:text-slate-600 focus:border-sky-400"
             />
           </label>
@@ -282,6 +387,10 @@ export function FuelForm({
             <input
               name="location_name"
               placeholder="Store or stop name"
+              defaultValue={
+                editingTransaction
+                  ?.location_name ?? ""
+              }
               className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none placeholder:text-slate-600 focus:border-sky-400"
             />
           </label>
@@ -295,6 +404,9 @@ export function FuelForm({
 
             <input
               name="city"
+              defaultValue={
+                editingTransaction?.city ?? ""
+              }
               className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none focus:border-sky-400"
             />
           </label>
@@ -309,6 +421,9 @@ export function FuelForm({
               minLength={2}
               maxLength={2}
               placeholder="TX"
+              defaultValue={
+                editingTransaction?.state ?? ""
+              }
               className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 uppercase text-white outline-none placeholder:text-slate-600 focus:border-sky-400"
             />
           </label>
@@ -323,17 +438,33 @@ export function FuelForm({
             name="notes"
             rows={3}
             placeholder="Optional receipt details"
+            defaultValue={
+              editingTransaction?.notes ?? ""
+            }
             className="mt-2 w-full resize-y rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none placeholder:text-slate-600 focus:border-sky-400"
           />
         </label>
 
-        <button
-          type="submit"
-          disabled={trucks.length === 0}
-          className="w-full rounded-xl bg-amber-500 px-5 py-3.5 font-black text-slate-950 transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          Save diesel transaction
-        </button>
+        <div className="flex flex-col gap-3 sm:flex-row">
+          <button
+            type="submit"
+            disabled={trucks.length === 0}
+            className="flex-1 rounded-xl bg-amber-500 px-5 py-3.5 font-black text-slate-950 transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {editingTransaction
+              ? "Update diesel transaction"
+              : "Save diesel transaction"}
+          </button>
+
+          {editingTransaction ? (
+            <Link
+              href="/fuel#fuel-entry"
+              className="rounded-xl border border-slate-700 bg-slate-950 px-5 py-3.5 text-center font-bold text-slate-300 transition hover:border-slate-600 hover:text-white"
+            >
+              Cancel
+            </Link>
+          ) : null}
+        </div>
       </form>
     </article>
   );

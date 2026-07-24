@@ -1,21 +1,44 @@
 "use client";
 
+import Link from "next/link";
 import {
   useEffect,
   useRef,
 } from "react";
 
-import { createDefTransaction } from "./actions";
+import {
+  createDefTransaction,
+  updateDefTransaction,
+} from "./actions";
 import type {
   LoadOption,
   TruckOption,
 } from "./types";
+
+type EditableDefTransaction = {
+  id: string;
+  truck_id: string;
+  load_id: string | null;
+  transaction_date: string;
+  transaction_time: string | null;
+  odometer: number | null;
+  gallons: number;
+  price_per_gallon: number;
+  total_amount: number;
+  network: string | null;
+  location_name: string | null;
+  city: string | null;
+  state: string | null;
+  notes: string | null;
+};
 
 type DefFormProps = {
   trucks: TruckOption[];
   loads: LoadOption[];
   defaultDate: string;
   resetKey?: string;
+  editingTransaction?: EditableDefTransaction;
+  editRequested?: boolean;
 };
 
 export function DefForm({
@@ -23,11 +46,17 @@ export function DefForm({
   loads,
   defaultDate,
   resetKey,
+  editingTransaction,
+  editRequested = false,
 }: DefFormProps) {
   const formRef =
     useRef<HTMLFormElement>(null);
 
   useEffect(() => {
+    if (editingTransaction) {
+      return;
+    }
+
     const form = formRef.current;
 
     if (!form) {
@@ -47,7 +76,11 @@ export function DefForm({
     ) {
       dateField.value = defaultDate;
     }
-  }, [defaultDate, resetKey]);
+  }, [
+    defaultDate,
+    editingTransaction,
+    resetKey,
+  ]);
 
   return (
     <article
@@ -55,12 +88,28 @@ export function DefForm({
       className="rounded-2xl border border-slate-800 bg-slate-900/80 p-5 sm:p-6"
     >
       <p className="text-sm font-semibold text-sky-400">
-        DEF entry
+        {editingTransaction
+          ? "Edit DEF"
+          : "DEF entry"}
       </p>
 
       <h2 className="mt-1 text-2xl font-black text-white">
-        Add DEF
+        {editingTransaction
+          ? "Update DEF transaction"
+          : "Add DEF"}
       </h2>
+
+      {editRequested &&
+      !editingTransaction ? (
+        <div
+          role="alert"
+          className="mt-4 rounded-xl border border-amber-400/20 bg-amber-400/10 px-4 py-3 text-sm leading-6 text-amber-200"
+        >
+          That DEF transaction could not be
+          found. The form returned to create
+          mode.
+        </div>
+      ) : null}
 
       {trucks.length === 0 ? (
         <div className="mt-4 rounded-xl border border-amber-400/20 bg-amber-400/10 px-4 py-3 text-sm leading-6 text-amber-200">
@@ -71,10 +120,27 @@ export function DefForm({
 
       <form
         ref={formRef}
-        action={createDefTransaction}
+        key={
+          editingTransaction?.id ??
+          resetKey ??
+          "new-def"
+        }
+        action={
+          editingTransaction
+            ? updateDefTransaction
+            : createDefTransaction
+        }
         autoComplete="off"
         className="mt-6 space-y-5"
       >
+        {editingTransaction ? (
+          <input
+            type="hidden"
+            name="transaction_id"
+            value={editingTransaction.id}
+          />
+        ) : null}
+
         <label className="block">
           <span className="text-sm font-semibold text-slate-300">
             Truck
@@ -85,7 +151,9 @@ export function DefForm({
             required
             disabled={trucks.length === 0}
             defaultValue={
-              trucks[0]?.id ?? ""
+              editingTransaction?.truck_id ??
+              trucks[0]?.id ??
+              ""
             }
             className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none focus:border-sky-400 disabled:cursor-not-allowed disabled:opacity-50"
           >
@@ -121,7 +189,10 @@ export function DefForm({
 
           <select
             name="load_id"
-            defaultValue=""
+            defaultValue={
+              editingTransaction?.load_id ??
+              ""
+            }
             className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none focus:border-sky-400"
           >
             <option value="">
@@ -155,7 +226,11 @@ export function DefForm({
               name="transaction_date"
               type="date"
               required
-              defaultValue={defaultDate}
+              defaultValue={
+                editingTransaction
+                  ?.transaction_date ??
+                defaultDate
+              }
               className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none focus:border-sky-400"
             />
           </label>
@@ -168,6 +243,10 @@ export function DefForm({
             <input
               name="transaction_time"
               type="time"
+              defaultValue={
+                editingTransaction
+                  ?.transaction_time ?? ""
+              }
               className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none focus:border-sky-400"
             />
           </label>
@@ -184,6 +263,10 @@ export function DefForm({
             min="0"
             step="1"
             placeholder="Optional"
+            defaultValue={
+              editingTransaction?.odometer ??
+              ""
+            }
             className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none placeholder:text-slate-600 focus:border-sky-400"
           />
         </label>
@@ -201,6 +284,10 @@ export function DefForm({
               step="0.001"
               required
               placeholder="0.000"
+              defaultValue={
+                editingTransaction?.gallons ??
+                ""
+              }
               className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none placeholder:text-slate-600 focus:border-sky-400"
             />
           </label>
@@ -217,6 +304,10 @@ export function DefForm({
               step="0.0001"
               required
               placeholder="0.0000"
+              defaultValue={
+                editingTransaction
+                  ?.price_per_gallon ?? ""
+              }
               className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none placeholder:text-slate-600 focus:border-sky-400"
             />
           </label>
@@ -233,15 +324,20 @@ export function DefForm({
               step="0.01"
               required
               placeholder="0.00"
+              defaultValue={
+                editingTransaction
+                  ?.total_amount ?? ""
+              }
               className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none placeholder:text-slate-600 focus:border-sky-400"
             />
           </label>
         </div>
 
         <p className="rounded-xl border border-slate-800 bg-slate-950/60 px-4 py-3 text-xs leading-5 text-slate-500">
-          DEF is tracked separately from
-          diesel, while the linked expense
-          remains the financial source of truth.
+          DEF remains separate from diesel.
+          Updating this record also updates its
+          existing linked expense instead of
+          creating another cost.
         </p>
 
         <div className="grid gap-4 sm:grid-cols-2">
@@ -253,6 +349,10 @@ export function DefForm({
             <input
               name="network"
               placeholder="Pilot/Flying J"
+              defaultValue={
+                editingTransaction?.network ??
+                ""
+              }
               className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none placeholder:text-slate-600 focus:border-sky-400"
             />
           </label>
@@ -265,6 +365,10 @@ export function DefForm({
             <input
               name="location_name"
               placeholder="Store or stop name"
+              defaultValue={
+                editingTransaction
+                  ?.location_name ?? ""
+              }
               className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none placeholder:text-slate-600 focus:border-sky-400"
             />
           </label>
@@ -278,6 +382,9 @@ export function DefForm({
 
             <input
               name="city"
+              defaultValue={
+                editingTransaction?.city ?? ""
+              }
               className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none focus:border-sky-400"
             />
           </label>
@@ -292,6 +399,9 @@ export function DefForm({
               minLength={2}
               maxLength={2}
               placeholder="TX"
+              defaultValue={
+                editingTransaction?.state ?? ""
+              }
               className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 uppercase text-white outline-none placeholder:text-slate-600 focus:border-sky-400"
             />
           </label>
@@ -306,17 +416,33 @@ export function DefForm({
             name="notes"
             rows={3}
             placeholder="Optional receipt details"
+            defaultValue={
+              editingTransaction?.notes ?? ""
+            }
             className="mt-2 w-full resize-y rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none placeholder:text-slate-600 focus:border-sky-400"
           />
         </label>
 
-        <button
-          type="submit"
-          disabled={trucks.length === 0}
-          className="w-full rounded-xl bg-sky-500 px-5 py-3.5 font-black text-white transition hover:bg-sky-400 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          Save DEF transaction
-        </button>
+        <div className="flex flex-col gap-3 sm:flex-row">
+          <button
+            type="submit"
+            disabled={trucks.length === 0}
+            className="flex-1 rounded-xl bg-sky-500 px-5 py-3.5 font-black text-white transition hover:bg-sky-400 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {editingTransaction
+              ? "Update DEF transaction"
+              : "Save DEF transaction"}
+          </button>
+
+          {editingTransaction ? (
+            <Link
+              href="/fuel#def-entry"
+              className="rounded-xl border border-slate-700 bg-slate-950 px-5 py-3.5 text-center font-bold text-slate-300 transition hover:border-slate-600 hover:text-white"
+            >
+              Cancel
+            </Link>
+          ) : null}
+        </div>
       </form>
     </article>
   );
