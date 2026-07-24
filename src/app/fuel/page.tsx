@@ -65,6 +65,8 @@ type FuelPageProps = {
     error?: string;
     success?: string;
     saved?: string;
+    editFuel?: string;
+    editDef?: string;
   }>;
 };
 
@@ -163,6 +165,8 @@ export default async function FuelPage({
     error,
     success,
     saved,
+    editFuel,
+    editDef,
   } = await searchParams;
 
   const supabase = await createClient();
@@ -310,6 +314,23 @@ export default async function FuelPage({
 
   const defTransactions =
     (defData ?? []) as DefTransaction[];
+
+  const editingFuelTransaction =
+    editFuel
+      ? fuelTransactions.find(
+          (transaction) =>
+            transaction.id === editFuel &&
+            !transaction.is_legacy,
+        )
+      : undefined;
+
+  const editingDefTransaction =
+    editDef
+      ? defTransactions.find(
+          (transaction) =>
+            transaction.id === editDef,
+        )
+      : undefined;
 
   const trucksById = new Map(
     trucks.map((truck) => [
@@ -499,6 +520,12 @@ export default async function FuelPage({
             loads={loads}
             defaultDate={getDefaultDate()}
             resetKey={saved}
+            editingTransaction={
+              editingFuelTransaction
+            }
+            editRequested={Boolean(
+              editFuel,
+            )}
           />
 
           <DefForm
@@ -506,6 +533,12 @@ export default async function FuelPage({
             loads={loads}
             defaultDate={getDefaultDate()}
             resetKey={saved}
+            editingTransaction={
+              editingDefTransaction
+            }
+            editRequested={Boolean(
+              editDef,
+            )}
           />
         </section>
 
@@ -716,7 +749,16 @@ export default async function FuelPage({
                           </p>
                         ) : null}
 
-                        <div className="mt-4 flex justify-end">
+                        <div className="mt-4 flex justify-end gap-2">
+                          {!transaction.is_legacy ? (
+                            <Link
+                              href={`/fuel?editFuel=${transaction.id}#fuel-entry`}
+                              className="rounded-lg border border-amber-400/20 bg-amber-400/10 px-3 py-2 text-xs font-bold text-amber-300 transition hover:border-amber-400/50 hover:bg-amber-400/20"
+                            >
+                              Edit
+                            </Link>
+                          ) : null}
+
                           <DeleteRecordForm
                             kind="fuel"
                             recordId={
@@ -850,7 +892,14 @@ export default async function FuelPage({
                           </p>
                         ) : null}
 
-                        <div className="mt-4 flex justify-end">
+                        <div className="mt-4 flex justify-end gap-2">
+                          <Link
+                            href={`/fuel?editDef=${transaction.id}#def-entry`}
+                            className="rounded-lg border border-sky-400/20 bg-sky-400/10 px-3 py-2 text-xs font-bold text-sky-300 transition hover:border-sky-400/50 hover:bg-sky-400/20"
+                          >
+                            Edit
+                          </Link>
+
                           <DeleteRecordForm
                             kind="def"
                             recordId={

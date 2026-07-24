@@ -492,6 +492,81 @@ export async function createFuelTransaction(
   );
 }
 
+export async function updateFuelTransaction(
+  formData: FormData,
+) {
+  const transactionId = requireText(
+    formData,
+    "transaction_id",
+    "Fuel transaction ID",
+  );
+
+  const values =
+    readSharedTransactionValues(
+      formData,
+    );
+
+  const pumpPrice =
+    readPositiveNumber(
+      formData,
+      "pump_price_per_gallon",
+      "Pump price",
+    );
+
+  const discount =
+    readNonnegativeNumber(
+      formData,
+      "discount_per_gallon",
+      "Discount per gallon",
+    );
+
+  if (discount >= pumpPrice) {
+    redirectWithError(
+      "Discount per gallon must be less than the pump price.",
+    );
+  }
+
+  const { supabase } =
+    await getAuthenticatedClient();
+
+  const { error } = await supabase.rpc(
+    "update_fuel_transaction",
+    {
+      p_transaction_id:
+        transactionId,
+      ...values,
+      p_pump_price_per_gallon:
+        pumpPrice,
+      p_discount_per_gallon:
+        discount,
+    },
+  );
+
+  if (error) {
+    console.error(
+      "Unable to update fuel transaction:",
+      error,
+    );
+
+    redirectWithError(
+      error.message.includes(
+        "settlement",
+      ) ||
+      error.message.includes(
+        "Legacy",
+      )
+        ? error.message
+        : "Axleledger could not update the diesel transaction.",
+    );
+  }
+
+  revalidateFuelPages();
+
+  redirectWithSuccess(
+    "Diesel transaction updated successfully.",
+  );
+}
+
 export async function deleteFuelTransaction(
   formData: FormData,
 ) {
@@ -569,6 +644,60 @@ export async function createDefTransaction(
 
   redirectWithSuccess(
     "DEF transaction added successfully.",
+  );
+}
+
+export async function updateDefTransaction(
+  formData: FormData,
+) {
+  const transactionId = requireText(
+    formData,
+    "transaction_id",
+    "DEF transaction ID",
+  );
+
+  const values =
+    readSharedTransactionValues(
+      formData,
+    );
+
+  const { supabase } =
+    await getAuthenticatedClient();
+
+  const { error } = await supabase.rpc(
+    "update_def_transaction",
+    {
+      p_transaction_id:
+        transactionId,
+      ...values,
+      p_price_per_gallon:
+        readPositiveNumber(
+          formData,
+          "price_per_gallon",
+          "DEF price",
+        ),
+    },
+  );
+
+  if (error) {
+    console.error(
+      "Unable to update DEF transaction:",
+      error,
+    );
+
+    redirectWithError(
+      error.message.includes(
+        "settlement",
+      )
+        ? error.message
+        : "Axleledger could not update the DEF transaction.",
+    );
+  }
+
+  revalidateFuelPages();
+
+  redirectWithSuccess(
+    "DEF transaction updated successfully.",
   );
 }
 
