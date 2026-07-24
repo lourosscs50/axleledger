@@ -106,5 +106,4 @@ export type FixedCostOption = {
   effective_date: string;
   is_active: boolean;
   notes: string | null;
-  expected_amount: number;
 };

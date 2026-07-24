@@ -217,66 +217,6 @@ function isEditable(
   );
 }
 
-function calculateFixedCostExpectedAmount(
-  fixedCost: Omit<
-    FixedCostOption,
-    "expected_amount"
-  >,
-  settlement: SettlementRecord,
-) {
-  if (
-    settlement.period_start_date &&
-    settlement.period_end_date
-  ) {
-    if (
-      fixedCost.effective_date >
-      settlement.period_end_date
-    ) {
-      return null;
-    }
-
-    const effectiveStart =
-      fixedCost.effective_date >
-      settlement.period_start_date
-        ? fixedCost.effective_date
-        : settlement.period_start_date;
-
-    const start = new Date(
-      `${effectiveStart}T00:00:00Z`,
-    );
-
-    const end = new Date(
-      `${settlement.period_end_date}T00:00:00Z`,
-    );
-
-    const days =
-      Math.floor(
-        (end.getTime() - start.getTime()) /
-          (1000 * 60 * 60 * 24),
-      ) + 1;
-
-    const divisor =
-      fixedCost.frequency === "weekly"
-        ? 7
-        : 30.4375;
-
-    return Math.round(
-      (Number(fixedCost.amount) *
-        (days / divisor)) *
-        100,
-    ) / 100;
-  }
-
-  if (
-    fixedCost.effective_date >
-    settlement.settlement_date
-  ) {
-    return null;
-  }
-
-  return Number(fixedCost.amount);
-}
-
 function auditDetail(
   audit: SettlementAuditRecord,
 ) {
@@ -558,12 +498,7 @@ export default async function SettlementsPage({
     >;
 
   const fixedCostRecords =
-    (fixedCostsData ?? []) as Array<
-      Omit<
-        FixedCostOption,
-        "expected_amount"
-      >
-    >;
+    (fixedCostsData ?? []) as FixedCostOption[];
 
   const loadsById = new Map(
     loads.map((load) => [load.id, load]),
@@ -615,7 +550,8 @@ export default async function SettlementsPage({
   const totalPaidDeposits = settlements
     .filter(
       (settlement) =>
-        settlement.status === "paid",
+        settlement.status === "paid" &&
+        Number(settlement.net_deposit) > 0,
     )
     .reduce(
       (total, settlement) =>
@@ -710,13 +646,6 @@ export default async function SettlementsPage({
       0,
     );
 
-  const linkedFixedCostStatementTotal =
-    selectedLinkedFixedCostLines.reduce(
-      (total, lineItem) =>
-        total + Number(lineItem.amount),
-      0,
-    );
-
   const selectedLinkedFixedCostIds =
     new Set(
       selectedLinkedFixedCostLines
@@ -735,41 +664,24 @@ export default async function SettlementsPage({
   const availableFixedCosts: FixedCostOption[] =
     selectedSettlement
       ? fixedCostRecords
-          .map((fixedCost) => ({
-            fixedCost,
-            expectedAmount:
-              calculateFixedCostExpectedAmount(
-                fixedCost,
-                selectedSettlement,
-              ),
-          }))
           .filter(
-            (record) =>
-              record.expectedAmount !== null &&
-              record.expectedAmount > 0 &&
+            (fixedCost) =>
               !selectedLinkedFixedCostIds.has(
-                record.fixedCost.id,
+                fixedCost.id,
               ),
           )
           .sort((first, second) => {
             if (
-              first.fixedCost.is_active !==
-              second.fixedCost.is_active
+              first.is_active !==
+              second.is_active
             ) {
-              return first.fixedCost.is_active
-                ? -1
-                : 1;
+              return first.is_active ? -1 : 1;
             }
 
-            return first.fixedCost.name.localeCompare(
-              second.fixedCost.name,
+            return first.name.localeCompare(
+              second.name,
             );
           })
-          .map((record) => ({
-            ...record.fixedCost,
-            expected_amount:
-              record.expectedAmount as number,
-          }))
       : [];
 
   const availableExpenses: ExpenseOption[] =
@@ -1104,9 +1016,17 @@ export default async function SettlementsPage({
 
                 <div className="rounded-xl bg-slate-950/70 p-4">
                   <p className="text-xs text-slate-500">
-                    Net deposit
+                    Net settlement
                   </p>
-                  <p className="mt-1 text-lg font-black text-white">
+                  <p
+                    className={
+                      Number(
+                        selectedSettlement.net_deposit,
+                      ) < 0
+                        ? "mt-1 text-lg font-black text-red-400"
+                        : "mt-1 text-lg font-black text-white"
+                    }
+                  >
                     {formatCurrency(
                       selectedSettlement.net_deposit,
                     )}
@@ -1209,20 +1129,22 @@ export default async function SettlementsPage({
                                   )}
                                 </p>
 
-                                {lineItem.source_type &&
+                                {lineItem.source_type ===
+                                  "fixed_cost" &&
                                 lineItem.source_amount !== null ? (
-                                  <div
-                                    className={
-                                      lineItem.source_type ===
-                                      "fixed_cost"
-                                        ? "mt-3 rounded-lg border border-violet-400/15 bg-violet-400/5 px-3 py-2 text-xs leading-5 text-violet-100/80"
-                                        : "mt-3 rounded-lg border border-sky-400/15 bg-sky-400/5 px-3 py-2 text-xs leading-5 text-sky-100/80"
-                                    }
-                                  >
-                                    {lineItem.source_type ===
-                                    "fixed_cost"
-                                      ? "Expected recurring amount: "
-                                      : "Expense ledger amount: "}
+                                  <div className="mt-3 rounded-lg border border-violet-400/15 bg-violet-400/5 px-3 py-2 text-xs leading-5 text-violet-100/80">
+                                    Fixed-cost amount:{" "}
+                                    <strong>
+                                      {formatCurrency(
+                                        lineItem.source_amount,
+                                      )}
+                                    </strong>
+                                  </div>
+                                ) : lineItem.source_type ===
+                                    "expense" &&
+                                  lineItem.source_amount !== null ? (
+                                  <div className="mt-3 rounded-lg border border-sky-400/15 bg-sky-400/5 px-3 py-2 text-xs leading-5 text-sky-100/80">
+                                    Expense ledger amount:{" "}
                                     <strong>
                                       {formatCurrency(
                                         lineItem.source_amount,
@@ -1455,40 +1377,25 @@ export default async function SettlementsPage({
                   </p>
 
                   <h3 className="mt-1 text-xl font-black text-white">
-                    Fixed-cost reconciliation
+                    Fixed-cost links
                   </h3>
 
                   <p className="mt-2 text-sm leading-6 text-slate-400">
                     Link truck payments, trailer
-                    leases, insurance, and other
-                    scheduled costs instead of
-                    retyping each deduction.
+                    leases, insurance, and other fixed
+                    costs at their exact saved amounts.
                   </p>
 
-                  <div className="mt-5 grid gap-3 sm:grid-cols-2">
-                    <div className="rounded-xl bg-slate-950/60 p-4">
-                      <p className="text-xs text-slate-500">
-                        Expected recurring costs
-                      </p>
+                  <div className="mt-5 rounded-xl bg-slate-950/60 p-4">
+                    <p className="text-xs text-slate-500">
+                      Linked fixed-cost total
+                    </p>
 
-                      <p className="mt-1 font-black text-white">
-                        {formatCurrency(
-                          linkedFixedCostSourceTotal,
-                        )}
-                      </p>
-                    </div>
-
-                    <div className="rounded-xl bg-slate-950/60 p-4">
-                      <p className="text-xs text-slate-500">
-                        Statement deductions
-                      </p>
-
-                      <p className="mt-1 font-black text-amber-400">
-                        {formatCurrency(
-                          linkedFixedCostStatementTotal,
-                        )}
-                      </p>
-                    </div>
+                    <p className="mt-1 font-black text-amber-400">
+                      {formatCurrency(
+                        linkedFixedCostSourceTotal,
+                      )}
+                    </p>
                   </div>
 
                   <p className="mt-3 text-xs leading-5 text-slate-500">
@@ -1823,9 +1730,17 @@ export default async function SettlementsPage({
                           <div className="flex items-center justify-between gap-3 sm:flex-col sm:items-end">
                             <div className="text-right">
                               <p className="text-xs text-slate-500">
-                                Net deposit
+                                Net settlement
                               </p>
-                              <p className="mt-1 text-lg font-black text-white">
+                              <p
+                                className={
+                                  Number(
+                                    settlement.net_deposit,
+                                  ) < 0
+                                    ? "mt-1 text-lg font-black text-red-400"
+                                    : "mt-1 text-lg font-black text-white"
+                                }
+                              >
                                 {formatCurrency(
                                   settlement.net_deposit,
                                 )}

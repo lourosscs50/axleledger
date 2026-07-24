@@ -50,9 +50,8 @@ export function FixedCostReconciliationForm({
         </p>
 
         <p className="mt-2 text-sm leading-6 text-slate-500">
-          Add a recurring fixed cost first, or
-          unlink a cost already used on this
-          settlement.
+          Add a fixed cost first, or unlink a cost
+          already used on this settlement.
         </p>
       </div>
     );
@@ -116,10 +115,6 @@ export function FixedCostReconciliationForm({
                         " ",
                       )}
                       {" · "}
-                      {formatCurrency(
-                        fixedCost.amount,
-                      )}
-                      {" "}
                       {fixedCost.frequency}
                       {" · Effective "}
                       {formatDate(
@@ -130,11 +125,11 @@ export function FixedCostReconciliationForm({
 
                   <div className="text-right">
                     <p className="text-xs text-slate-500">
-                      Expected this statement
+                      Fixed amount
                     </p>
                     <p className="mt-1 font-black text-violet-300">
                       {formatCurrency(
-                        fixedCost.expected_amount,
+                        fixedCost.amount,
                       )}
                     </p>
                   </div>
@@ -145,37 +140,6 @@ export function FixedCostReconciliationForm({
                     {fixedCost.notes}
                   </p>
                 ) : null}
-
-                <div className="mt-4 grid gap-3 lg:grid-cols-2">
-                  <label>
-                    <span className="text-xs font-semibold text-slate-400">
-                      Statement deduction
-                    </span>
-
-                    <input
-                      name={`statement_amount_${fixedCost.id}`}
-                      type="number"
-                      min="0.01"
-                      step="0.01"
-                      defaultValue={Number(
-                        fixedCost.expected_amount,
-                      ).toFixed(2)}
-                      className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-white outline-none focus:border-violet-400"
-                    />
-                  </label>
-
-                  <label>
-                    <span className="text-xs font-semibold text-slate-400">
-                      Variance reason
-                    </span>
-
-                    <input
-                      name={`variance_reason_${fixedCost.id}`}
-                      placeholder="Required only when amounts differ"
-                      className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-white outline-none placeholder:text-slate-600 focus:border-violet-400"
-                    />
-                  </label>
-                </div>
               </div>
             </div>
           </section>
@@ -183,10 +147,11 @@ export function FixedCostReconciliationForm({
       </div>
 
       <div className="rounded-xl border border-violet-400/20 bg-violet-400/5 px-4 py-3 text-xs leading-5 text-violet-100/80">
-        Axleledger calculates the expected amount
-        from the fixed-cost schedule and settlement
-        period. Only a statement variance is added
-        beyond the recurring dashboard cost.
+        Linking copies each fixed cost&apos;s saved
+        amount exactly. Axleledger does not prorate
+        it or create a separate expected amount.
+        Change the value only by editing the fixed-cost
+        record.
       </div>
 
       <button

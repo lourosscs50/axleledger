@@ -1237,10 +1237,11 @@ export default async function Home({
         ),
     );
 
-  const paidPeriodSettlements =
+  const paidDepositSettlements =
     periodSettlements.filter(
       (settlement) =>
-        settlement.status === "paid",
+        settlement.status === "paid" &&
+        Number(settlement.net_deposit) > 0,
     );
 
   const activeFixedCosts =
@@ -1390,21 +1391,6 @@ export default async function Home({
       },
     );
 
-  const linkedFixedCostStatementTotal =
-    sumValues(
-      periodDeductionLines.filter(
-        (lineItem) =>
-          lineItem.source_type ===
-          "fixed_cost",
-      ),
-      (lineItem) =>
-        Number(lineItem.amount),
-    );
-
-  const linkedFixedCostVariance =
-    linkedFixedCostStatementTotal -
-    linkedFixedCostSourceTotal;
-
   const manualSettlementDeductions =
     sumValues(
       periodDeductionLines.filter(
@@ -1419,8 +1405,7 @@ export default async function Home({
 
   const settlementDeductions =
     manualSettlementDeductions +
-    linkedExpenseVariance +
-    linkedFixedCostVariance;
+    linkedExpenseVariance;
 
   const recurringCostBaseline = sumValues(
     activeFixedCosts,
@@ -1494,7 +1479,7 @@ export default async function Home({
       : null;
 
   const netDeposits = sumValues(
-    paidPeriodSettlements,
+    paidDepositSettlements,
     (settlement) =>
       Number(
         settlement.net_deposit,
@@ -1693,7 +1678,7 @@ export default async function Home({
           type: "expense" as const,
         }),
       ),
-      ...paidPeriodSettlements.map(
+      ...paidDepositSettlements.map(
         (settlement) => ({
           id: `settlement-${settlement.id}`,
           title:
@@ -2271,10 +2256,10 @@ export default async function Home({
           contribute deductions and reimbursements.
           Operating expenses linked to settlements
           remain counted once through the expense
-          ledger. Fixed costs linked to settlements
-          remain counted once through their recurring
-          schedules. Only manual deductions and
-          statement-to-source variances add
+          ledger. Fixed costs link at their exact saved
+          amounts and remain counted once through the
+          recurring-cost total. Only manual deductions
+          and operating-expense variances add
           settlement-only costs.
           Only paid settlements appear as cash
           deposits, preventing draft values from

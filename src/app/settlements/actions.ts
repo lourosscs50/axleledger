@@ -853,18 +853,6 @@ export async function linkSettlementFixedCosts(
   const links = fixedCostIds.map(
     (fixedCostId) => ({
       fixed_cost_id: fixedCostId,
-      statement_amount:
-        readPositiveNumber(
-          formData,
-          `statement_amount_${fixedCostId}`,
-          "Statement deduction",
-          settlementId,
-        ),
-      variance_reason:
-        readText(
-          formData,
-          `variance_reason_${fixedCostId}`,
-        ) || null,
     }),
   );
 
@@ -891,18 +879,14 @@ export async function linkSettlementFixedCosts(
       )
         ? error.message
         : error.message.includes(
-              "variance reason",
+              "draft or reopened",
             )
           ? error.message
           : error.message.includes(
-                "draft or reopened",
+                "negative net",
               )
-            ? error.message
-            : error.message.includes(
-                  "not effective",
-                )
-              ? error.message
-              : "Axleledger could not link those recurring fixed costs.",
+            ? "This fixed cost would create a negative settlement balance. Apply the signed-settlement-balance migration, then try again."
+            : "Axleledger could not link those recurring fixed costs.",
       settlementId,
     );
   }
